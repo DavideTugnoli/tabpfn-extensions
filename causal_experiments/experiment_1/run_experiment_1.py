@@ -9,8 +9,8 @@ Usage:
 
 import argparse
 from experiment_1 import run_experiment_1
-from ..utils.dag_utils import get_ordering_strategies, print_dag_info
-from ..utils.scm_data import get_dag_and_config
+from utils.dag_utils import get_ordering_strategies, print_dag_info
+from utils.scm_data import get_dag_and_config
 
 def main():
     parser = argparse.ArgumentParser(description='Run Experiment 1')

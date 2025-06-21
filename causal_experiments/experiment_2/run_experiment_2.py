@@ -8,8 +8,8 @@ Usage:
 
 import argparse
 from experiment_2 import run_experiment_2
-from ..utils.dag_utils import print_dag_info
-from ..utils.scm_data import get_dag_and_config
+from utils.dag_utils import print_dag_info
+from utils.scm_data import get_dag_and_config
 
 
 def main():
