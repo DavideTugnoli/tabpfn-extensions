@@ -1,4 +1,3 @@
-# src/metrics.py
 """
 Evaluation metrics for synthetic data quality assessment.
 

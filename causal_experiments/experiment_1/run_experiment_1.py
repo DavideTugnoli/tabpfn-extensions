@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Simple script to run Experiment 1.
 
@@ -10,7 +9,7 @@ Usage:
 
 import argparse
 from experiment_1 import run_experiment_1
-from dag_utils import get_ordering_strategies, print_dag_info
+from ..utils.dag_utils import get_ordering_strategies, print_dag_info
 from scm_data import get_dag_and_config
 
 def main():

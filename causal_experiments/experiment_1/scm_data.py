@@ -1,4 +1,3 @@
-# scm_data.py
 """
 Simple SCM data generation - no classes, just functions.
 """

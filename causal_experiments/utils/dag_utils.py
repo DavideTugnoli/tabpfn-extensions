@@ -225,11 +225,50 @@ def print_dag_info(dag: Dict[int, List[int]], column_names: List[str] = None) ->
         print(f"  {name:12}: [{', '.join(ordered_names)}]")
 
 
+def convert_named_dag_to_indices(named_dag, column_names):
+    """
+    Convert a DAG defined with node names to one with indices.
+    
+    Args:
+        named_dag: Dictionary {node_name: [list_of_parent_names]}
+        column_names: List of column names defining the index mapping
+        
+    Returns:
+        Dictionary {node_index: [list_of_parent_indices]}
+    """
+    # Create mapping from names to indices
+    name_to_idx = {name: idx for idx, name in enumerate(column_names)}
+    
+    # Convert DAG
+    index_dag = {}
+    for node_name, parent_names in named_dag.items():
+        if node_name in name_to_idx:  # Skip nodes not in column_names
+            node_idx = name_to_idx[node_name]
+            parent_indices = [name_to_idx[p] for p in parent_names if p in name_to_idx]
+            index_dag[node_idx] = parent_indices
+    
+    return index_dag
+
 # Example usage and testing
 if __name__ == "__main__":
-    # Test with our current SCM
-    test_dag = {0: [], 1: [0, 2], 2: [3], 3: []}
+    # Define DAG using node names
+    named_dag = {
+        "X1": [],           # X1 is independent
+        "X2": ["X1", "X3"], # X2 depends on X1 and X3
+        "X3": ["X4"],       # X3 depends on X4
+        "X4": []            # X4 is independent
+    }
+
+    # Convert to index-based DAG
     test_columns = ["X1", "X2", "X3", "X4"]
+    test_dag = convert_named_dag_to_indices(named_dag, test_columns)
+
+    # This should produce: {0: [], 1: [0, 2], 2: [3], 3: []}
+    print(test_dag)
+
+    # Test with our current SCM
+    # test_dag = {0: [], 1: [0, 2], 2: [3], 3: []}
+    # test_columns = ["X1", "X2", "X3", "X4"]
     
     print("Testing DAG utilities:")
     print_dag_info(test_dag, test_columns)
