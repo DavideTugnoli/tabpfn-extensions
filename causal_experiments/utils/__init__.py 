@@ -1,1 +1,29 @@
-from .dag_utils import *
+"""
+Shared utilities for causal experiments with TabPFN.
+
+This package contains reusable components:
+- SCM data generation
+- Evaluation metrics  
+- DAG utilities
+- Common functions across experiments
+"""
+
+from .scm_data import generate_scm_data, get_dag_and_config
+from .metrics import SyntheticDataEvaluator, get_metric_descriptions
+from .dag_utils import (
+    get_ordering_strategies, 
+    reorder_data_and_dag, 
+    print_dag_info,
+    topological_sort
+)
+
+__all__ = [
+    'generate_scm_data',
+    'get_dag_and_config', 
+    'SyntheticDataEvaluator',
+    'get_metric_descriptions',
+    'get_ordering_strategies',
+    'reorder_data_and_dag',
+    'print_dag_info',
+    'topological_sort'
+]

@@ -18,8 +18,8 @@ warnings.filterwarnings('ignore')
 from tabpfn_extensions import TabPFNClassifier, TabPFNRegressor, unsupervised
 
 # Local imports
-from scm_data import generate_scm_data, get_dag_and_config
-from metrics import SyntheticDataEvaluator
+from ..utils.scm_data import generate_scm_data, get_dag_and_config
+from ..utils.metrics import SyntheticDataEvaluator
 from ..utils.dag_utils import get_ordering_strategies, reorder_data_and_dag
 
 def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
