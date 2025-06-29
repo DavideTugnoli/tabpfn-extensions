@@ -1,4 +1,0 @@
-train_size,repetition,categorical,column_order_strategy,column_order,mean_corr_distance_with_dag,mean_corr_distance_without_dag,max_corr_distance_with_dag,max_corr_distance_without_dag,propensity_mse_with_dag,propensity_mse_without_dag,k_marginal_tvd_with_dag,k_marginal_tvd_without_dag
-20,0,False,topological,"[0, 3, 2, 1]",-1.0,-1.0,-1.0,-1.0,-1.0,-1.0,0.29491666666666666,0.25633333333333336
-20,1,False,topological,"[0, 3, 2, 1]",-1.0,-1.0,-1.0,-1.0,-1.0,-1.0,0.2845833333333333,0.2836666666666667
-20,2,False,topological,"[0, 3, 2, 1]",-1.0,-1.0,-1.0,-1.0,-1.0,-1.0,0.25375,0.31366666666666665
