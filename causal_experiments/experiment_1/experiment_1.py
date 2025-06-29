@@ -25,7 +25,7 @@ from tabpfn_extensions import TabPFNClassifier, TabPFNRegressor, unsupervised
 
 # Local imports
 from utils.scm_data import generate_scm_data, get_dag_and_config
-from utils.metrics import SyntheticDataEvaluator
+from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
 
@@ -130,15 +130,17 @@ def run_single_iteration(train_size, repetition, config, X_test, correct_dag, co
         torch.cuda.empty_cache()
     
     # === EVALUATE ===
-    evaluator = SyntheticDataEvaluator(config['metrics'])
+    evaluator = FaithfulDataEvaluator()
     
     metrics_dag = evaluator.evaluate(
-        X_test_reordered, X_synth_dag, 
-        col_names_reordered, categorical_cols_reordered
+        pd.DataFrame(X_test_reordered, columns=col_names_reordered), 
+        pd.DataFrame(X_synth_dag, columns=col_names_reordered),
+        k_for_kmarginal=2
     )
     metrics_no_dag = evaluator.evaluate(
-        X_test_reordered, X_synth_no_dag, 
-        col_names_reordered, categorical_cols_reordered
+        pd.DataFrame(X_test_reordered, columns=col_names_reordered), 
+        pd.DataFrame(X_synth_no_dag, columns=col_names_reordered),
+        k_for_kmarginal=2
     )
     
     # Build result
@@ -167,7 +169,7 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
             'n_repetitions': 10,
             'test_size': 2000,
             'n_permutations': 3,
-            'metrics': ['mean_corr_diff', 'max_corr_diff', 'propensity_mse', 'kmarginal'],
+            'metrics': ['mean_corr_distance', 'max_corr_distance', 'propensity_mse', 'k_marginal_tvd'],
             'include_categorical': False,
             'n_estimators': 3,
             'random_seed_base': 42,
@@ -268,7 +270,7 @@ def main():
         'n_repetitions': 10,
         'test_size': 2000,
         'n_permutations': 3,
-        'metrics': ['mean_corr_diff', 'max_corr_diff', 'propensity_mse', 'kmarginal'],
+        'metrics': ['mean_corr_distance', 'max_corr_distance', 'propensity_mse', 'k_marginal_tvd'],
         'include_categorical': False,
         'n_estimators': 3,
         'random_seed_base': 42,

@@ -1,168 +1,255 @@
 """
-Evaluation metrics for synthetic data quality assessment.
+This module provides the FaithfulDataEvaluator class to assess the quality of
+synthetic data.
 
-This module provides metrics to compare real vs synthetic tabular data:
-- Max Correlation Difference (max_corr_diff)
-- Mean Correlation Difference (mean_corr_diff)
-- Propensity MSE (propensity_mse)
-- K-marginal Distribution Distance (kmarginal)
+The calculation logic is a faithful re-implementation of the methodology
+found in the reference files ('k_marginal.py' and 'syntheval_facade.py')
+to ensure 100% consistent results.
+
+This module is self-contained and does not require other local files.
 """
 
-import numpy as np
 import pandas as pd
-import sys
-from io import StringIO
-from typing import Dict, List, Optional, Union
+import numpy as np
+import itertools
+import random
+import warnings
+from typing import Dict, List, Tuple
+
+# The only required external dependency is SynthEval
 from syntheval import SynthEval
 
-from metrics.k_marginal import KMarginal, bin_data_for_k_marginal
-from metrics.syntheval_facade import evaluate_correlation_difference, evaluate_pmse
 
-class SyntheticDataEvaluator:
+class FaithfulDataEvaluator:
     """
-    Evaluates the quality of synthetic data compared to real data.
-    Provides multiple complementary metrics.
+    Calculates data quality metrics for synthetic data, faithfully adhering
+    to a reference methodology.
     """
 
-    def __init__(self, metrics: List[str] = None):
+    def evaluate(
+        self,
+        real_data: pd.DataFrame,
+        synthetic_data: pd.DataFrame,
+        k_for_kmarginal: int = 2
+    ) -> Dict[str, float]:
         """
-        Initialize evaluator with specified metrics.
-        Default: ['mean_corr_diff', 'max_corr_diff', 'propensity_mse', 'kmarginal']
-        """
-        self.available_metrics = ['mean_corr_diff', 'max_corr_diff', 'propensity_mse', 'kmarginal']
-        self.metrics = metrics or self.available_metrics.copy()
-        invalid_metrics = set(self.metrics) - set(self.available_metrics)
-        if invalid_metrics:
-            raise ValueError(f"Invalid metrics: {invalid_metrics}. "
-                             f"Available: {self.available_metrics}")
+        Runs the complete evaluation and returns a dictionary of metrics.
 
-    def evaluate(self, X_real: Union[np.ndarray, pd.DataFrame],
-                 X_synthetic: Union[np.ndarray, pd.DataFrame],
-                 column_names: Optional[List[str]] = None,
-                 categorical_columns: Optional[List[int]] = None) -> Dict[str, float]:
-        """
-        Evaluate synthetic data quality using multiple metrics.
-        """
-        X_real_df = self._ensure_dataframe(X_real, column_names)
-        X_synthetic_df = self._ensure_dataframe(X_synthetic, column_names)
+        Args:
+            real_data (pd.DataFrame): The DataFrame containing the real data.
+            synthetic_data (pd.DataFrame): The DataFrame containing the synthetic data.
+            k_for_kmarginal (int, optional): The order of marginals to compute. Defaults to 2.
 
+        Returns:
+            Dict[str, float]: A dictionary containing the names and values of the metrics.
+        """
         results = {}
 
-        # Correlation metrics (mean/max) and propensity_mse
-        if any(metric in ['mean_corr_diff', 'max_corr_diff', 'propensity_mse'] for metric in self.metrics):
-            syntheval_results = self._compute_syntheval_metrics(
-                X_real_df, X_synthetic_df, categorical_columns
-            )
-            results.update(syntheval_results)
+        # --- Metrics based on the SynthEval library ---
+        syntheval_metrics = self._compute_syntheval_metrics(real_data, synthetic_data)
+        results.update(syntheval_metrics)
 
-        # K-marginal
-        if 'kmarginal' in self.metrics:
-            results['kmarginal'] = self._compute_kmarginal_distance(
-                X_real_df, X_synthetic_df, categorical_columns
-            )
+        # --- K-Marginal Metric ---
+        kmarginal_tvd = self._compute_kmarginal_metric(real_data, synthetic_data, k=k_for_kmarginal)
+        results['k_marginal_tvd'] = kmarginal_tvd
 
-        # Filter to requested metrics only
-        return {metric: results[metric] for metric in self.metrics if metric in results}
+        return results
 
-    def _ensure_dataframe(self, data: Union[np.ndarray, pd.DataFrame],
-                         column_names: Optional[List[str]]) -> pd.DataFrame:
-        if isinstance(data, pd.DataFrame):
-            return data.copy()
-        else:
-            if column_names is None:
-                column_names = [f'col_{i}' for i in range(data.shape[1])]
-            return pd.DataFrame(data, columns=column_names)
-
-    def _compute_syntheval_metrics(self, X_real: pd.DataFrame,
-                                   X_synthetic: pd.DataFrame,
-                                   categorical_columns: Optional[List[int]] = None) -> Dict[str, float]:
+    def _compute_syntheval_metrics(
+        self,
+        real_data: pd.DataFrame,
+        synthetic_data: pd.DataFrame
+    ) -> Dict[str, float]:
         """
-        Compute SynthEval-based metrics:
-        - mean_corr_diff (mean of upper triangle, excluding diagonal)
-        - max_corr_diff (max absolute difference)
-        - propensity_mse (average pMSE)
+        Calculates metrics that rely on the SynthEval library, using the
+        exact parameters from the reference implementation.
         """
-        X_real_for_eval = X_real.copy()
-        X_synthetic_for_eval = X_synthetic.copy()
+        # Initialize the evaluator with the real data
+        evaluator = SynthEval(real_data, cat_cols=[])  # Assuming numeric data as per examples
 
-        cat_col_names = []
-        if categorical_columns:
-            for col_idx in categorical_columns:
-                col_name = X_real.columns[col_idx]
-                cat_col_names.append(col_name)
-                X_real_for_eval[col_name] = X_real_for_eval[col_name].astype(int)
-                X_synthetic_for_eval[col_name] = X_synthetic_for_eval[col_name].astype(int)
-
-        evaluator = SynthEval(X_real_for_eval)
-
-        # Suppress printout
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = StringIO()
-        sys.stderr = StringIO()
-
-        try:
+        # Run the evaluation in a single pass for efficiency
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)
             evaluator.evaluate(
-                X_synthetic_for_eval,
-                cat_cols=cat_col_names if cat_col_names else None,
+                synthetic_data,
                 **{
                     "corr_diff": {"return_mats": True},
-                    "p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear"},
+                    "p_mse": {
+                        "k_folds": 5,
+                        "max_iter": 100,
+                        "solver": "liblinear",
+                    }
                 }
             )
 
-            results = {}
-            # Correlation matrix difference
-            if 'mean_corr_diff' in self.metrics or 'max_corr_diff' in self.metrics:
-                # Usa la funzione di facade per uniformità (già fedele ai file)
-                corr_diff_mat = evaluate_correlation_difference(evaluator, X_synthetic_for_eval)
-                abs_diff = np.abs(corr_diff_mat.values)
-                tri_upper = abs_diff[np.triu_indices(abs_diff.shape[0], k=1)]
-                if 'mean_corr_diff' in self.metrics:
-                    results['mean_corr_diff'] = tri_upper.mean()
-                if 'max_corr_diff' in self.metrics:
-                    results['max_corr_diff'] = abs_diff.max()
-            # Propensity
-            if 'propensity_mse' in self.metrics:
-                pmse_res = evaluate_pmse(evaluator, X_synthetic_for_eval)
-                results['propensity_mse'] = pmse_res.get('avg pMSE', -1.0)
+        eval_results = evaluator.get_results()
+        metrics = {}
 
-            return results
+        # 1. Extract correlation difference and compute max and mean
+        if 'corr_diff' in eval_results:
+            diff_matrix = eval_results['corr_diff']['diff_cor_mat']
+            abs_diff_values = np.abs(diff_matrix.values)
 
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+            # Max corr distance
+            metrics['max_corr_distance'] = np.max(abs_diff_values)
 
-    def _compute_kmarginal_distance(self, real_data: pd.DataFrame,
-                                    synthetic_data: pd.DataFrame,
-                                    categorical_indices: Optional[List[int]] = None,
-                                    k: int = 2) -> float:
+            # Mean corr distance (on the upper triangle to avoid duplicates)
+            upper_triangle_indices = np.triu_indices(abs_diff_values.shape[0], k=1)
+            metrics['mean_corr_distance'] = np.mean(abs_diff_values[upper_triangle_indices])
+        else:
+            metrics['max_corr_distance'] = -1.0
+            metrics['mean_corr_distance'] = -1.0
+
+        # 2. Extract Propensity MSE
+        if 'p_mse' in eval_results:
+            metrics['propensity_mse'] = eval_results['p_mse'].get('avg pMSE', -1.0)
+        else:
+            metrics['propensity_mse'] = -1.0
+
+        return metrics
+
+    def _compute_kmarginal_metric(
+        self,
+        real_data: pd.DataFrame,
+        synthetic_data: pd.DataFrame,
+        k: int
+    ) -> float:
         """
-        Faithful calculation using bin_data_for_k_marginal and KMarginal.
+        Calculates the K-Marginal TVD metric by following the reference
+        file's discretization and calculation logic.
         """
-        # Defensive: synth columns must match real columns (same names)
-        if not all(real_data.columns == synthetic_data.columns):
-            synthetic_data = synthetic_data.copy()
-            synthetic_data.columns = real_data.columns
+        # Step 1: Discretize (bin) the data using the reference methodology
+        real_binned, syn_binned = self._discretize_for_kmarginal(real_data, synthetic_data)
 
-        real_binned, _, syn_binned = bin_data_for_k_marginal(
-            real_data, real_data, synthetic_data, categorical_features=[]
-        )
-        try:
-            km = KMarginal(real_binned, syn_binned, k=k)
-            tdds = 0
-            for marg in km.marginal_pairs():
-                _, _, abs_den_diff = km.marginal_densities(km.td, marg)
-                tdds += abs_den_diff.sum()
-            mean_tdds = tdds / len(km.marginals)
-            return mean_tdds / 2
-        except Exception:
-            return 1.0  # Fail-safe
+        # Step 2: Calculate the mean TVD on the marginals
+        features = real_binned.columns.tolist()
+        if len(features) < k:
+            return 1.0  # Cannot compute marginals
 
-def get_metric_descriptions() -> Dict[str, str]:
-    return {
-        'mean_corr_diff': 'Mean absolute difference (off-diagonal) between correlation matrices (lower is better)',
-        'max_corr_diff': 'Maximum absolute difference between correlation matrices (lower is better)',
-        'propensity_mse': 'Mean squared error of propensity scores from real/synthetic classifier (lower is better)',
-        'kmarginal': 'Average Total Variation Distance between k-dimensional marginal distributions (lower is better)'
-    }
+        # Generate marginal combinations
+        marginals = list(itertools.combinations(sorted(features), k))
+
+        # Subsample if there are too many marginals (as per original file)
+        subsample_threshold = 1000
+        if len(marginals) > subsample_threshold:
+            marginals = random.sample(marginals, subsample_threshold)
+
+        if not marginals:
+            return 1.0
+
+        total_density_diff_sum = 0
+        for marg in marginals:
+            marg = list(marg)
+            # Calculate densities (probability distributions)
+            t_den = real_binned.groupby(marg).size() / len(real_binned)
+            s_den = syn_binned.groupby(marg).size() / len(syn_binned)
+
+            # Sum of absolute differences for the current marginal
+            abs_den_diff = t_den.subtract(s_den, fill_value=0).abs()
+            total_density_diff_sum += abs_den_diff.sum()
+
+        # Calculate the mean (this is 'mean_tdds' from the original file)
+        mean_total_density_diff = total_density_diff_sum / len(marginals)
+
+        # The TVD is half of this sum
+        mean_tvd = mean_total_density_diff / 2.0
+
+        return mean_tvd
+
+    def _discretize_for_kmarginal(
+        self,
+        real_data: pd.DataFrame,
+        synthetic_data: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Replicates the percentile-rank-based binning logic from the reference file.
+        """
+        # Identify numeric columns with enough unique values to be binned
+        numeric_features = [
+            col for col in real_data.select_dtypes(include=np.number).columns
+            if real_data[col].nunique() >= 20
+        ]
+
+        # --- Bin the real (training) data ---
+        real_binned = real_data.copy()
+        for col in numeric_features:
+            # Handle non-NA values
+            not_na_mask = real_binned[col].notna()
+            # Calculate percentile ranks
+            ranked_pct = real_binned.loc[not_na_mask, col].rank(pct=True)
+            # Assign to one of 20 bins (0-19)
+            real_binned.loc[not_na_mask, col] = ranked_pct.apply(lambda x: int(20 * x) if x < 1 else 19)
+            # Assign a special bin for NA values
+            real_binned.loc[real_data[col].isna(), col] = -1
+
+        # --- Bin the synthetic data based on the real data's bin structure ---
+        syn_binned = synthetic_data.copy()
+        for col in numeric_features:
+            # Handle non-NA values
+            syn_not_na_mask = syn_binned[col].notna()
+            syn_numeric_values = pd.to_numeric(syn_binned.loc[syn_not_na_mask, col])
+            
+            binned_syn_values = syn_numeric_values.copy()
+            max_value_of_previous_bin = -np.inf
+            
+            # Sort unique bins from the real data (excluding the NA bin)
+            unique_bins = sorted([b for b in real_binned[col].unique() if b != -1])
+            
+            for i, bin_val in enumerate(unique_bins):
+                # Find the original maximum value in the real data for this bin
+                indices_for_bin = real_binned[real_binned[col] == bin_val].index
+                max_value_in_bin = real_data.loc[indices_for_bin, col].max()
+
+                if i < len(unique_bins) - 1: # Not the last bin
+                    min_value_of_current_bin = max_value_of_previous_bin
+                    binned_syn_values.loc[
+                        (syn_numeric_values > min_value_of_current_bin) &
+                        (syn_numeric_values <= max_value_in_bin)
+                    ] = bin_val
+                else: # This is the last bin
+                    min_value_of_current_bin = max_value_of_previous_bin
+                    binned_syn_values.loc[syn_numeric_values > min_value_of_current_bin] = bin_val
+                
+                max_value_of_previous_bin = max_value_in_bin
+
+            syn_binned.loc[syn_not_na_mask, col] = binned_syn_values
+            # Assign a special bin for NA values
+            syn_binned.loc[synthetic_data[col].isna(), col] = -1
+
+        # Return only the relevant binned columns as integers
+        return real_binned[numeric_features].astype(int), syn_binned[numeric_features].astype(int)
+
+
+# --- Example of How to Use This File ---
+if __name__ == '__main__':
+    print("Example usage of the FaithfulDataEvaluator class")
+
+    # 1. Create sample data
+    np.random.seed(42)
+    sample_real_data = pd.DataFrame({
+        'feature_A': np.random.randn(500),
+        'feature_B': np.random.rand(500) * 100,
+        'feature_C': np.random.poisson(10, 500)
+    })
+    # Add some missing values for testing the binning logic
+    sample_real_data.loc[sample_real_data.sample(frac=0.05).index, 'feature_A'] = np.nan
+
+    # Create synthetic data with slight differences
+    sample_synthetic_data = pd.DataFrame({
+        'feature_A': np.random.randn(500) * 1.2 + 0.2,
+        'feature_B': np.random.rand(500) * 95,
+        'feature_C': np.random.poisson(10.5, 500)
+    })
+
+    # 2. Initialize and use the evaluator
+    evaluator = FaithfulDataEvaluator()
+
+    print("\nRunning evaluation...")
+    all_metrics = evaluator.evaluate(sample_real_data, sample_synthetic_data, k_for_kmarginal=2)
+
+    # 3. Print the results
+    print("\n--- Evaluation Results ---")
+    for metric_name, value in all_metrics.items():
+        print(f"{metric_name:<25}: {value:.6f}")
+    print("--------------------------")

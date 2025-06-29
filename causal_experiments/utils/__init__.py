@@ -10,7 +10,7 @@ This package contains reusable components:
 """
 
 from .scm_data import generate_scm_data, get_dag_and_config
-from .metrics import SyntheticDataEvaluator, get_metric_descriptions
+from .metrics import FaithfulDataEvaluator
 from .dag_utils import (
     get_ordering_strategies, 
     reorder_data_and_dag, 
@@ -32,8 +32,7 @@ __all__ = [
     'get_dag_and_config',
     
     # metrics
-    'SyntheticDataEvaluator',
-    'get_metric_descriptions',
+    'FaithfulDataEvaluator',
     
     # dag_utils
     'get_ordering_strategies',
