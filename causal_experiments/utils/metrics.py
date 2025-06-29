@@ -71,7 +71,7 @@ class FaithfulDataEvaluator:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", FutureWarning)
             warnings.simplefilter("ignore", RuntimeWarning)
-            evaluator.evaluate(
+            eval_results = evaluator.evaluate(
                 synthetic_data,
                 **{
                     "corr_diff": {"return_mats": True},
@@ -83,7 +83,6 @@ class FaithfulDataEvaluator:
                 }
             )
 
-        eval_results = evaluator.get_results()
         metrics = {}
 
         # 1. Extract correlation difference and compute max and mean

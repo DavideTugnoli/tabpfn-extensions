@@ -1,0 +1,1 @@
+{"corr_diff": {"return_mats": true}, "p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear"}}

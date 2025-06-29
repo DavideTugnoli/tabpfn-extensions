@@ -20,6 +20,9 @@ import warnings
 import argparse
 warnings.filterwarnings('ignore')
 
+# Add the causal_experiments directory to the path for local imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 # TabPFN imports
 from tabpfn_extensions import TabPFNClassifier, TabPFNRegressor, unsupervised
 
@@ -149,7 +152,8 @@ def run_single_iteration(train_size, repetition, config, X_test, correct_dag, co
         'repetition': repetition,
         'categorical': config['include_categorical'],
         'column_order_strategy': column_order_name,
-        'column_order': str(column_order)  # For debugging
+        'column_order': str(column_order),  # For debugging
+        'dag_used': str(dag_reordered)  # Add DAG information
     }
     
     for metric in config['metrics']:
@@ -223,6 +227,7 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
                 # Progress
                 completed += 1
                 print(f"    Progress: {completed}/{total_iterations} ({100*completed/total_iterations:.1f}%)")
+                print(f"    Results saved to: {output_dir}/raw_results.csv")
             
             start_rep = 0
     
@@ -250,8 +255,8 @@ def main():
     parser = argparse.ArgumentParser(description='Run Experiment 1')
     parser.add_argument('--no-resume', action='store_true',
                        help='Start fresh (ignore checkpoint)')
-    parser.add_argument('--order', type=str, default='topological',
-                       choices=['original', 'topological', 'worst', 'random', 'reverse'],
+    parser.add_argument('--order', type=str, default='both',
+                       choices=['original', 'topological', 'worst', 'random', 'reverse', 'both'],
                        help='Column ordering strategy')
     parser.add_argument('--output', type=str, default=None,
                        help='Output directory (auto-generated if not specified)')
@@ -274,23 +279,47 @@ def main():
         'include_categorical': False,
         'n_estimators': 3,
         'random_seed_base': 42,
-        'column_order_strategy': args.order
     }
-    output_dir = args.output or f"experiment_1_{args.order}"
     
-    print("Starting Experiment 1...")
-    print(f"Column order strategy: {args.order}")
-    print(f"Resume: {not args.no_resume}")
-    print(f"Output: {output_dir}")
-    print(f"Total iterations: {len(config['train_sizes']) * config['n_repetitions']}")
+    # Determine which orderings to run
+    if args.order == 'both':
+        orderings_to_run = ['topological', 'original']
+    else:
+        orderings_to_run = [args.order]
     
-    results = run_experiment_1(
-        config=config,
-        output_dir=output_dir,
-        resume=not args.no_resume
-    )
+    all_results = []
     
-    print(f"\nExperiment completed! Results shape: {results.shape if hasattr(results, 'shape') else len(results)}")
+    for ordering in orderings_to_run:
+        config['column_order_strategy'] = ordering
+        output_dir = args.output or f"experiment_1_{ordering}"
+        
+        print(f"\n{'='*50}")
+        print(f"Starting Experiment 1 with ordering: {ordering}")
+        print(f"Column order strategy: {ordering}")
+        print(f"Resume: {not args.no_resume}")
+        print(f"Output: {output_dir}")
+        print(f"Total iterations: {len(config['train_sizes']) * config['n_repetitions']}")
+        print(f"{'='*50}")
+        
+        results = run_experiment_1(
+            config=config,
+            output_dir=output_dir,
+            resume=not args.no_resume
+        )
+        
+        all_results.append(results)
+    
+    # Combine all results if multiple orderings were run
+    if len(all_results) > 1:
+        combined_results = pd.concat(all_results, ignore_index=True)
+        combined_output_dir = args.output or "experiment_1_combined"
+        combined_output_dir = Path(combined_output_dir)
+        combined_output_dir.mkdir(exist_ok=True)
+        combined_results.to_csv(combined_output_dir / "combined_results.csv", index=False)
+        print(f"\nCombined results saved to: {combined_output_dir}")
+        print(f"Combined results shape: {combined_results.shape}")
+    
+    print(f"\nAll experiments completed!")
 
 
 if __name__ == "__main__":
