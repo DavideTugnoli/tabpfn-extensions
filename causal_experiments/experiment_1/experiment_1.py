@@ -136,13 +136,15 @@ def run_single_iteration(train_size, repetition, config, X_test, correct_dag, co
     evaluator = FaithfulDataEvaluator()
     
     metrics_dag = evaluator.evaluate(
-        pd.DataFrame(X_test_reordered, columns=col_names_reordered), 
+        pd.DataFrame(X_test_reordered, columns=col_names_reordered),
         pd.DataFrame(X_synth_dag, columns=col_names_reordered),
+        categorical_columns=categorical_cols_reordered,
         k_for_kmarginal=2
     )
     metrics_no_dag = evaluator.evaluate(
-        pd.DataFrame(X_test_reordered, columns=col_names_reordered), 
+        pd.DataFrame(X_test_reordered, columns=col_names_reordered),
         pd.DataFrame(X_synth_no_dag, columns=col_names_reordered),
+        categorical_columns=categorical_cols_reordered,
         k_for_kmarginal=2
     )
     
@@ -183,7 +185,7 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
             'n_repetitions': 10,
             'test_size': 2000,
             'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
             'include_categorical': False,
             'n_estimators': 3,
             'random_seed_base': 42,
@@ -191,7 +193,8 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
         }
     
     # Create output directory
-    output_dir = Path(output_dir)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = Path(script_dir) / 'results'
     output_dir.mkdir(exist_ok=True)
     
     print(f"Experiment 1 - Output dir: {output_dir}")
@@ -285,7 +288,7 @@ def main():
         'n_repetitions': 10,
         'test_size': 2000,
         'n_permutations': 3,
-        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
         'include_categorical': False,
         'n_estimators': 3,
         'random_seed_base': 42,

@@ -137,7 +137,12 @@ def run_single_configuration(train_size, order_strategy, repetition, config,
         X_test_reordered = pd.DataFrame(X_test_reordered, columns=col_names_reordered)
     if not isinstance(X_synth, pd.DataFrame):
         X_synth = pd.DataFrame(X_synth, columns=col_names_reordered)
-    metrics = evaluator.evaluate(X_test_reordered, X_synth, col_names_reordered, categorical_cols_reordered)
+    metrics = evaluator.evaluate(
+        X_test_reordered,
+        X_synth,
+        categorical_columns=col_names_reordered,
+        k_for_kmarginal=2
+    )
     
     # Build result
     result = {
@@ -179,7 +184,8 @@ def run_experiment_2(config=None, output_dir="experiment_2_results", resume=True
         }
     
     # Create output directory
-    output_dir = Path(output_dir)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = Path(script_dir) / 'results'
     output_dir.mkdir(exist_ok=True)
     
     print(f"Experiment 2 - Output dir: {output_dir}")
@@ -316,8 +322,11 @@ def main():
         print("EXPERIMENT SUMMARY")
         print("=" * 60)
         
+        # Get actual metric columns from results
+        metric_columns = [col for col in results.columns if col not in ['train_size', 'order_strategy', 'column_order', 'dag_used', 'repetition', 'categorical']]
+        
         # Best and worst orderings per metric
-        for metric in config['metrics']:
+        for metric in metric_columns:
             print(f"\n{metric.upper()}:")
             mean_by_order = results.groupby('order_strategy')[metric].mean()
             best_order = mean_by_order.idxmin()

@@ -8,10 +8,17 @@ import numpy as np
 import itertools
 import random
 import warnings
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
 
 # The only required external dependency is SynthEval
 from syntheval import SynthEval
+
+# Disable matplotlib plotting to prevent SynthEval from saving images
+plt.ioff()
+matplotlib.rcParams['figure.max_open_warning'] = 0
 
 # --- Section 1: Standalone Metric Functions ---
 

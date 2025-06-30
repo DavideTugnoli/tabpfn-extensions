@@ -117,7 +117,12 @@ def run_single_configuration(train_size, dag_type, repetition, config,
         X_test = pd.DataFrame(X_test, columns=col_names)
     if not isinstance(X_synth, pd.DataFrame):
         X_synth = pd.DataFrame(X_synth, columns=col_names)
-    metrics = evaluator.evaluate(X_test, X_synth, col_names, categorical_cols)
+    metrics = evaluator.evaluate(
+        X_test,
+        X_synth,
+        categorical_columns=col_names,
+        k_for_kmarginal=2
+    )
     
     # Build result
     result = {
@@ -156,7 +161,7 @@ def run_experiment_3(config=None, output_dir="experiment_3_results", resume=True
             'n_repetitions': 10,
             'test_size': 2000,
             'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
             'include_categorical': False,
             'n_estimators': 3,
             'random_seed_base': 42,
@@ -164,7 +169,8 @@ def run_experiment_3(config=None, output_dir="experiment_3_results", resume=True
         }
     
     # Create output directory
-    output_dir = Path(output_dir)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = Path(script_dir) / 'results'
     output_dir.mkdir(exist_ok=True)
     
     print(f"Experiment 3 - Output dir: {output_dir}")
@@ -280,7 +286,7 @@ def main():
         'n_repetitions': 10,
         'test_size': 2000,
         'n_permutations': 3,
-        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
         'include_categorical': False,
         'n_estimators': 3,
         'random_seed_base': 42
@@ -314,7 +320,10 @@ def main():
         print("=" * 60)
         
         # Overall comparison
-        for metric in config['metrics']:
+        # Get actual metric columns from results
+        metric_columns = [col for col in results.columns if col not in ['train_size', 'dag_type', 'dag_used', 'repetition', 'categorical', 'dag_edges']]
+        
+        for metric in metric_columns:
             print(f"\n{metric.upper()} Results:")
             print("-" * 40)
             
@@ -329,14 +338,15 @@ def main():
                 print(f"  {i}. {dag_type}: {value:.4f}")
             
             # Compare to correct DAG
-            correct_value = mean_by_dag['correct']
-            print(f"\nComparison to correct DAG ({correct_value:.4f}):")
-            
-            for dag_type in config['dag_types']:
-                if dag_type != 'correct':
-                    diff = mean_by_dag[dag_type] - correct_value
-                    pct_worse = (diff / correct_value) * 100
-                    print(f"  {dag_type}: {diff:+.4f} ({pct_worse:+.1f}%)")
+            if 'correct' in mean_by_dag.index:
+                correct_value = mean_by_dag['correct']
+                print(f"\nComparison to correct DAG ({correct_value:.4f}):")
+                
+                for dag_type in config['dag_types']:
+                    if dag_type != 'correct' and dag_type in mean_by_dag.index:
+                        diff = mean_by_dag[dag_type] - correct_value
+                        pct_worse = (diff / correct_value) * 100
+                        print(f"  {dag_type}: {diff:+.4f} ({pct_worse:+.1f}%)")
 
 
 if __name__ == "__main__":

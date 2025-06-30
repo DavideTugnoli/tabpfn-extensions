@@ -163,7 +163,12 @@ def run_single_configuration(train_size, dag_level, repetition, config,
     if not isinstance(X_synthetic, pd.DataFrame):
         X_synthetic = pd.DataFrame(X_synthetic, columns=col_names)
     evaluator = FaithfulDataEvaluator()
-    metrics = evaluator.evaluate(X_test, X_synthetic, categorical_columns=categorical_cols)
+    metrics = evaluator.evaluate(
+        X_test,
+        X_synthetic,
+        categorical_columns=col_names,
+        k_for_kmarginal=2
+    )
     # Flatten propensity_metrics if present
     flat_metrics = {}
     for metric, value in metrics.items():
@@ -216,7 +221,8 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
         }
     
     # Create output directory
-    output_dir = Path(output_dir)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = Path(script_dir) / 'results'
     output_dir.mkdir(exist_ok=True)
     
     print(f"Experiment 4 - Output dir: {output_dir}")
