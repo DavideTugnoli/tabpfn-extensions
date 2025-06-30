@@ -130,7 +130,7 @@ def run_single_configuration(train_size, order_strategy, repetition, config,
         torch.cuda.empty_cache()
     
     # === EVALUATE ===
-    evaluator = FaithfulDataEvaluator(config['metrics'])
+    evaluator = FaithfulDataEvaluator()
     
     metrics = evaluator.evaluate(
         X_test_reordered, X_synth, 

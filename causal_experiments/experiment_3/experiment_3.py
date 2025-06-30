@@ -113,7 +113,7 @@ def run_single_configuration(train_size, dag_type, repetition, config,
         torch.cuda.empty_cache()
     
     # Evaluate
-    evaluator = FaithfulDataEvaluator(config['metrics'])
+    evaluator = FaithfulDataEvaluator()
     metrics = evaluator.evaluate(X_test, X_synth, col_names, categorical_cols)
     
     # Build result
