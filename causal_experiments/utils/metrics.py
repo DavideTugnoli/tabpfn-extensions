@@ -36,19 +36,23 @@ def calculate_correlation_metrics(
 
     evaluator = SynthEval(real_data, cat_cols=cat_cols)
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        evaluator.evaluate(synthetic_data, corr_diff={"return_mats": True})
+        warnings.simplefilter("ignore", FutureWarning)
+        warnings.simplefilter("ignore", RuntimeWarning)
+        evaluator.evaluate(
+            synthetic_data,
+            None,
+            **{"corr_diff": {"return_mats": True}}
+        )
 
-    eval_results = evaluator.get_results()
     metrics = {}
-
-    if 'corr_diff' in eval_results:
-        diff_matrix = eval_results['corr_diff']['diff_cor_mat']
+    try:
+        corr_diff_results = evaluator._raw_results["corr_diff"]
+        diff_matrix = corr_diff_results["diff_cor_mat"]
         abs_diff_values = np.abs(diff_matrix.values)
         metrics['max_corr_difference'] = np.max(abs_diff_values)
         upper_triangle_indices = np.triu_indices(abs_diff_values.shape[0], k=1)
         metrics['mean_corr_difference'] = np.mean(abs_diff_values[upper_triangle_indices])
-    else:
+    except Exception:
         metrics['max_corr_difference'] = -1.0
         metrics['mean_corr_difference'] = -1.0
     return metrics
@@ -79,14 +83,19 @@ def calculate_propensity_metrics(
 
     evaluator = SynthEval(real_data, cat_cols=cat_cols)
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+        warnings.simplefilter("ignore", FutureWarning)
+        warnings.simplefilter("ignore", RuntimeWarning)
         evaluator.evaluate(
             synthetic_data,
-            p_mse={"k_folds": 5, "max_iter": 100, "solver": "liblinear"}
+            None,
+            **{"p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear"}}
         )
-    eval_results = evaluator.get_results().get('p_mse', {})
     keys = ['avg pMSE', 'pMSE err', 'avg acc', 'acc err']
-    return {key: eval_results.get(key, -1.0) for key in keys}
+    try:
+        pmse_results = evaluator._raw_results["p_mse"]
+        return {key: pmse_results.get(key, -1.0) for key in keys}
+    except Exception:
+        return {key: -1.0 for key in keys}
 
 def _discretize_for_kmarginal(
     real_data: pd.DataFrame,
