@@ -112,8 +112,11 @@ def run_single_configuration(train_size, dag_type, repetition, config,
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     
-    # Evaluate
-    evaluator = FaithfulDataEvaluator()
+    # Ensure DataFrame inputs for evaluator
+    if not isinstance(X_test, pd.DataFrame):
+        X_test = pd.DataFrame(X_test, columns=col_names)
+    if not isinstance(X_synth, pd.DataFrame):
+        X_synth = pd.DataFrame(X_synth, columns=col_names)
     metrics = evaluator.evaluate(X_test, X_synth, col_names, categorical_cols)
     
     # Build result

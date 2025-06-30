@@ -157,7 +157,11 @@ def run_single_configuration(train_size, dag_level, repetition, config,
         n_permutations=config['n_permutations']
     )
     
-    # Evaluate synthetic data
+    # Ensure DataFrame inputs for evaluator
+    if not isinstance(X_test, pd.DataFrame):
+        X_test = pd.DataFrame(X_test, columns=col_names)
+    if not isinstance(X_synthetic, pd.DataFrame):
+        X_synthetic = pd.DataFrame(X_synthetic, columns=col_names)
     evaluator = FaithfulDataEvaluator()
     metrics = evaluator.evaluate(X_test, X_synthetic, categorical_columns=categorical_cols)
     # Flatten propensity_metrics if present

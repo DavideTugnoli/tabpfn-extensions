@@ -132,10 +132,12 @@ def run_single_configuration(train_size, order_strategy, repetition, config,
     # === EVALUATE ===
     evaluator = FaithfulDataEvaluator()
     
-    metrics = evaluator.evaluate(
-        X_test_reordered, X_synth, 
-        col_names_reordered, categorical_cols_reordered
-    )
+    # Ensure DataFrame inputs for evaluator
+    if not isinstance(X_test_reordered, pd.DataFrame):
+        X_test_reordered = pd.DataFrame(X_test_reordered, columns=col_names_reordered)
+    if not isinstance(X_synth, pd.DataFrame):
+        X_synth = pd.DataFrame(X_synth, columns=col_names_reordered)
+    metrics = evaluator.evaluate(X_test_reordered, X_synth, col_names_reordered, categorical_cols_reordered)
     
     # Build result
     result = {
