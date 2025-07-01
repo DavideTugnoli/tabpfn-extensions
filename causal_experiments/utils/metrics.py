@@ -42,14 +42,23 @@ def calculate_correlation_metrics(
         cat_cols = []
 
     evaluator = SynthEval(real_data, cat_cols=cat_cols)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        warnings.simplefilter("ignore", RuntimeWarning)
-        evaluator.evaluate(
-            synthetic_data,
-            ofile=None,
-            **{"corr_diff": {"return_mats": True, "plot_mat": False}}
-        )
+    
+    # BUGFIX: Temporarily disable plt.savefig to prevent SynthEval from creating plot files
+    original_savefig = plt.savefig
+    plt.savefig = lambda *args, **kwargs: None
+    
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)
+            evaluator.evaluate(
+                synthetic_data,
+                None,
+                **{"corr_diff": {"return_mats": True}}
+            )
+    finally:
+        # Restore the original savefig function
+        plt.savefig = original_savefig
 
     metrics = {}
     try:
@@ -89,14 +98,24 @@ def calculate_propensity_metrics(
         cat_cols = []
 
     evaluator = SynthEval(real_data, cat_cols=cat_cols)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        warnings.simplefilter("ignore", RuntimeWarning)
-        evaluator.evaluate(
-            synthetic_data,
-            ofile=None,
-            **{"p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear", "plot_res": False}}
-        )
+    
+    # BUGFIX: Temporarily disable plt.savefig to prevent SynthEval from creating plot files
+    original_savefig = plt.savefig
+    plt.savefig = lambda *args, **kwargs: None
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)
+            evaluator.evaluate(
+                synthetic_data,
+                None,
+                **{"p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear"}}
+            )
+    finally:
+        # Restore the original savefig function
+        plt.savefig = original_savefig
+
     keys = ['avg pMSE', 'pMSE err', 'avg acc', 'acc err']
     try:
         pmse_results = evaluator._raw_results["p_mse"]
