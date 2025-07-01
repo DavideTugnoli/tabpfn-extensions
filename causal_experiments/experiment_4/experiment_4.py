@@ -25,6 +25,7 @@ from utils.scm_data import generate_scm_data, get_dag_and_config
 from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import cpdag_to_dags
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
+from utils.experiment_utils import generate_synthetic_data_quiet
 
 
 def categorize_dags_by_complexity(dags, max_dags_to_test=5):
@@ -86,31 +87,6 @@ def categorize_dags_by_complexity(dags, max_dags_to_test=5):
                     categories[f'dag_mid_{i}_{edge_count}_edges'] = dag
     
     return categories
-
-
-def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
-    """Generate synthetic data with TabPFN, suppressing output."""
-    plt.ioff()
-    plt.close('all')
-    
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    sys.stdout = StringIO()
-    sys.stderr = StringIO()
-    
-    try:
-        X_synthetic = model.generate_synthetic_data(
-            n_samples=n_samples,
-            t=1.0,
-            n_permutations=n_permutations,
-            dag=dag
-        ).cpu().numpy()
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
-        plt.close('all')
-    
-    return X_synthetic
 
 
 def run_single_configuration(train_size, dag_level, repetition, config, 
@@ -208,24 +184,29 @@ def run_single_configuration(train_size, dag_level, repetition, config,
     return result
 
 
+# Centralized default config
+DEFAULT_CONFIG = {
+    'train_sizes': [50, 100, 200, 500],
+    'n_repetitions': 10,
+    'test_size': 2000,
+    'n_permutations': 3,
+    'metrics': ['max_corr_diff', 'propensity_mse', 'kmarginal'],
+    'include_categorical': False,
+    'n_estimators': 3,
+    'random_seed_base': 42,
+    'sample_dags': False,  # Whether to sample DAGs or test all
+    'max_dags_to_test': 5  # Max DAGs to test when sampling
+}
+
 def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resume=True):
     """
     Main experiment function for testing causal knowledge levels.
     """
-    # Default config
-    if config is None:
-        config = {
-            'train_sizes': [20, 50, 100, 200],
-            'n_repetitions': 10,
-            'test_size': 2000,
-            'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
-            'include_categorical': False,
-            'n_estimators': 3,
-            'random_seed_base': 42,
-            'sample_dags': False,  # Whether to sample DAGs or test all
-            'max_dags_to_test': 5  # Max DAGs to test when sampling
-        }
+    # Use centralized config and update with any overrides
+    base_config = DEFAULT_CONFIG.copy()
+    if config is not None:
+        base_config.update(config)
+    config = base_config
     
     # Create output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -360,17 +341,10 @@ if __name__ == "__main__":
     print(f"DAG sampling: {'Enabled (max 5 DAGs)' if args.sample_dags else 'Disabled (all DAGs)'}")
     print("=" * 60)
 
-    config = {
-        'train_sizes': [50, 100, 200, 500],
-        'n_repetitions': 10,
-        'test_size': 2000,
-        'n_permutations': 3,
-        'metrics': ['max_corr_diff', 'propensity_mse', 'kmarginal'],
-        'include_categorical': args.include_categorical,
-        'n_estimators': 3,
-        'random_seed_base': 42,
-        'max_dags_to_test': 5 if args.sample_dags else None
-    }
+    config = DEFAULT_CONFIG.copy()
+    config['include_categorical'] = args.include_categorical
+    config['sample_dags'] = args.sample_dags
+    config['max_dags_to_test'] = 5 if args.sample_dags else None
     output_dir = args.output or f"experiment_4_results_{'mixed' if args.include_categorical else 'continuous'}"
 
     # Discovery step

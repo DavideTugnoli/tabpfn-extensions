@@ -41,6 +41,7 @@ from utils.scm_data import generate_scm_data, get_dag_and_config
 from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
+from utils.experiment_utils import generate_synthetic_data_quiet
 
 # Centralized default config
 DEFAULT_CONFIG = {
@@ -54,31 +55,6 @@ DEFAULT_CONFIG = {
     'n_estimators': 3,
     'random_seed_base': 42
 }
-
-def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
-    """Generate synthetic data with TabPFN, suppressing output."""
-    plt.ioff()
-    plt.close('all')
-    
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    sys.stdout = StringIO()
-    sys.stderr = StringIO()
-    
-    try:
-        X_synthetic = model.generate_synthetic_data(
-            n_samples=n_samples,
-            t=1.0,
-            n_permutations=n_permutations,
-            dag=dag
-        ).cpu().numpy()
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
-        plt.close('all')
-    
-    return X_synthetic
-
 
 def run_single_configuration(train_size, order_strategy, repetition, config, 
                            X_test, correct_dag, col_names, categorical_cols):
