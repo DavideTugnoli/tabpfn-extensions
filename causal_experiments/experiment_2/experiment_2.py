@@ -39,9 +39,9 @@ warnings.filterwarnings('ignore')
 # Local imports
 from utils.scm_data import generate_scm_data, get_dag_and_config
 from utils.metrics import FaithfulDataEvaluator
-from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
+from utils.dag_utils import get_ordering_strategies, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
-from utils.experiment_utils import generate_synthetic_data_quiet
+from utils.experiment_utils import generate_synthetic_data_quiet, reorder_data_and_columns
 
 # Centralized default config
 DEFAULT_CONFIG = {
@@ -50,113 +50,78 @@ DEFAULT_CONFIG = {
     'n_repetitions': 10,
     'test_size': 2000,
     'n_permutations': 3,
-    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
     'include_categorical': False,
     'n_estimators': 3,
     'random_seed_base': 42
 }
 
+# Utility: Evaluate metrics
+
+def evaluate_metrics(X_test, X_synth, col_names, categorical_cols, k_for_kmarginal=2):
+    evaluator = FaithfulDataEvaluator()
+    cat_col_names = [col_names[i] for i in categorical_cols] if categorical_cols else []
+    return evaluator.evaluate(
+        pd.DataFrame(X_test, columns=col_names),
+        pd.DataFrame(X_synth, columns=col_names),
+        categorical_columns=cat_col_names if cat_col_names else None,
+        k_for_kmarginal=k_for_kmarginal
+    )
+
+# Pipeline: Vanilla TabPFN with column reordering
+
+def run_vanilla_tabpfn(X_train, X_test, col_names, categorical_cols, column_order, order_strategy, config, seed, train_size, repetition):
+    X_train_reordered, col_names_reordered, categorical_cols_reordered = reorder_data_and_columns(
+        X_train, col_names, categorical_cols, column_order
+    )
+    X_test_reordered, _, _ = reorder_data_and_columns(
+        X_test, col_names, categorical_cols, column_order
+    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
+    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
+    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
+    if categorical_cols_reordered:
+        model.set_categorical_features(categorical_cols_reordered)
+    model.fit(torch.from_numpy(X_train_reordered).float())
+    X_synth = generate_synthetic_data_quiet(
+        model, config['test_size'], None, config['n_permutations']
+    )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    metrics = evaluate_metrics(X_test_reordered, X_synth, col_names_reordered, categorical_cols_reordered)
+    base_info = {
+        'train_size': train_size,
+        'repetition': repetition,
+        'seed': seed,
+        'categorical': config['include_categorical'],
+        'column_order_strategy': order_strategy,
+        'column_order': str(column_order),
+    }
+    def flatten_metrics():
+        flat = {}
+        for metric in config['metrics']:
+            value = metrics.get(metric)
+            if isinstance(value, dict):
+                for submetric, subvalue in value.items():
+                    flat[f'{metric}_{submetric}'] = subvalue
+            else:
+                flat[metric] = value
+        return flat
+    return {**base_info, **flatten_metrics()}
+
+# Main configuration orchestrator
+
 def run_single_configuration(train_size, order_strategy, repetition, config, 
-                           X_test, correct_dag, col_names, categorical_cols):
-    """
-    Run one configuration: train_size + order_strategy + repetition.
-    
-    NOTE: For Experiment 2, we only test vanilla TabPFN (no DAG provided).
-    """
+                           X_test, correct_dag, col_names, categorical_cols, pre_calculated_column_order):
     print(f"    Order: {order_strategy}, Rep: {repetition+1}/{config['n_repetitions']}")
-    
-    # Set seeds
     seed = config['random_seed_base'] + repetition
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    
-    # Generate training data (always in "original" order first)
     X_train_original = generate_scm_data(train_size, seed, config['include_categorical'])
-    
-    # Get ordering
-    available_orderings = get_ordering_strategies(correct_dag)
-    
-    if order_strategy not in available_orderings:
-        raise ValueError(f"Unknown ordering strategy: {order_strategy}. "
-                        f"Available: {list(available_orderings.keys())}")
-    
-    column_order = available_orderings[order_strategy]
-    
-    # Reorder training data (NO DAG reordering needed for vanilla)
-    X_train, _ = reorder_data_and_dag(X_train_original, correct_dag, column_order)
-    X_train_tensor = torch.from_numpy(X_train).float()
-    
-    # Also reorder test data for consistent evaluation
-    X_test_reordered, _ = reorder_data_and_dag(X_test, correct_dag, column_order)
-    
-    # Reorder column names and categorical indices
-    col_names_reordered = [col_names[i] for i in column_order]
-    categorical_cols_reordered = None
-    if categorical_cols:
-        old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(column_order)}
-        categorical_cols_reordered = [old_to_new[col] for col in categorical_cols if col in old_to_new]
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # === VANILLA TabPFN (NO DAG) ===
-    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
-    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
-    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
-    
-    if categorical_cols_reordered:
-        model.set_categorical_features(categorical_cols_reordered)
-    
-    model.fit(X_train_tensor)
-    
-    # Generate synthetic data WITHOUT DAG
-    X_synth = generate_synthetic_data_quiet(
-        model, config['test_size'], None, config['n_permutations']
-    )
-    
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # === EVALUATE ===
-    evaluator = FaithfulDataEvaluator()
-    
-    # Ensure DataFrame inputs for evaluator
-    if not isinstance(X_test_reordered, pd.DataFrame):
-        X_test_reordered = pd.DataFrame(X_test_reordered, columns=col_names_reordered)
-    if not isinstance(X_synth, pd.DataFrame):
-        X_synth = pd.DataFrame(X_synth, columns=col_names_reordered)
-
-    # BUGFIX: Get the correct list of categorical column NAMES for the evaluator
-    cat_col_names_reordered = []
-    if categorical_cols_reordered:
-        cat_col_names_reordered = [col_names_reordered[i] for i in categorical_cols_reordered]
-
-    metrics = evaluator.evaluate(
-        X_test_reordered,
-        X_synth,
-        categorical_columns=cat_col_names_reordered if cat_col_names_reordered else None,
-        k_for_kmarginal=2
-    )
-    
-    # Build result
-    result = {
-        'train_size': train_size,
-        'order_strategy': order_strategy,
-        'column_order': str(column_order),
-        'repetition': repetition,
-        'categorical': config['include_categorical']
-    }
-    
-    # Add all metrics
-    for metric, value in metrics.items():
-        if isinstance(value, dict):
-            for submetric, subvalue in value.items():
-                result[f'{metric}_{submetric}'] = subvalue
-        else:
-            result[metric] = value
-    
-    return result
-
+    print(f"    Using pre-calculated column order: {order_strategy} = {pre_calculated_column_order}")
+    return run_vanilla_tabpfn(X_train_original, X_test, col_names, categorical_cols, pre_calculated_column_order, order_strategy, config, seed, train_size, repetition)
 
 def run_experiment_2(config=None, output_dir="experiment_2_results", resume=True):
     """
@@ -179,6 +144,16 @@ def run_experiment_2(config=None, output_dir="experiment_2_results", resume=True
     # Setup
     correct_dag, col_names, categorical_cols = get_dag_and_config(config['include_categorical'])
     X_test_original = generate_scm_data(config['test_size'], 123, config['include_categorical'])
+    
+    # Pre-calculate all column orders for each strategy (ONCE!)
+    available_orderings = get_ordering_strategies(correct_dag)
+    pre_calculated_orders = {}
+    for order_strategy in config['ordering_strategies']:
+        if order_strategy not in available_orderings:
+            raise ValueError(f"Unknown ordering strategy: {order_strategy}. "
+                            f"Available: {list(available_orderings.keys())}")
+        pre_calculated_orders[order_strategy] = available_orderings[order_strategy]
+        print(f"Pre-calculated column order for {order_strategy}: {pre_calculated_orders[order_strategy]}")
     
     # Check for checkpoint
     if resume:
@@ -205,7 +180,7 @@ def run_experiment_2(config=None, output_dir="experiment_2_results", resume=True
                     
                     result = run_single_configuration(
                         train_size, order_strategy, rep, config, X_test_original,
-                        correct_dag, col_names, categorical_cols
+                        correct_dag, col_names, categorical_cols, pre_calculated_orders[order_strategy]
                     )
                     
                     results_so_far.append(result)
@@ -254,7 +229,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Show DAG info
+    # Show SCM info (only for reference, not used in experiment)
     dag, col_names, _ = get_dag_and_config(False)
     print("=" * 60)
     print("EXPERIMENT 2: Column Ordering Effects on Vanilla TabPFN")
@@ -262,7 +237,7 @@ def main():
     print("\nResearch Question:")
     print("Does column ordering affect synthetic data quality when TabPFN")
     print("uses its implicit autoregressive mechanism (no DAG provided)?")
-    print("\nCurrent SCM structure:")
+    print("\nSCM structure (for ordering strategies reference):")
     print_dag_info(dag, col_names)
     print()
     
@@ -298,7 +273,7 @@ def main():
         print("=" * 60)
         
         # Get actual metric columns from results
-        metric_columns = [col for col in results.columns if col not in ['train_size', 'order_strategy', 'column_order', 'repetition', 'categorical']]
+        metric_columns = [col for col in results.columns if col not in ['train_size', 'repetition', 'categorical', 'seed', 'column_order_strategy', 'column_order']]
         
         # Best and worst orderings per metric
         for metric in metric_columns:

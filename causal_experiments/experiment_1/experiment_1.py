@@ -31,7 +31,7 @@ from utils.scm_data import generate_scm_data, get_dag_and_config
 from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
-from utils.experiment_utils import generate_synthetic_data_quiet
+from utils.experiment_utils import generate_synthetic_data_quiet, reorder_data_and_columns
 
 # Centralized default config
 DEFAULT_CONFIG = {
@@ -46,128 +46,115 @@ DEFAULT_CONFIG = {
     'column_order_strategy': 'original',
 }
 
-def run_single_iteration(train_size, repetition, config, X_test, correct_dag, col_names, categorical_cols):
-    """
-    Run one iteration: train_size + repetition.
-    Now GENERIC - works with any DAG!
-    """
+# Utility: Evaluate metrics
+
+def evaluate_metrics(X_test, X_synth, col_names, categorical_cols, k_for_kmarginal=2):
+    evaluator = FaithfulDataEvaluator()
+    cat_col_names = [col_names[i] for i in categorical_cols] if categorical_cols else []
+    return evaluator.evaluate(
+        pd.DataFrame(X_test, columns=col_names),
+        pd.DataFrame(X_synth, columns=col_names),
+        categorical_columns=cat_col_names if cat_col_names else None,
+        k_for_kmarginal=k_for_kmarginal
+    )
+
+# Pipeline: With DAG (no reordering)
+
+def run_with_dag(X_train, X_test, dag, col_names, categorical_cols, config, seed, train_size, repetition):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
+    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
+    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
+    if categorical_cols:
+        model.set_categorical_features(categorical_cols)
+    model.fit(torch.from_numpy(X_train).float())
+    X_synth = generate_synthetic_data_quiet(
+        model, config['test_size'], dag, config['n_permutations']
+    )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    metrics = evaluate_metrics(X_test, X_synth, col_names, categorical_cols)
+    base_info = {
+        'train_size': train_size,
+        'repetition': repetition,
+        'seed': seed,
+        'categorical': config['include_categorical'],
+        'column_order_strategy': 'none',
+        'column_order': 'none',
+    }
+    def flatten_metrics():
+        flat = {}
+        for metric in config['metrics']:
+            value = metrics.get(metric)
+            if isinstance(value, dict):
+                for submetric, subvalue in value.items():
+                    flat[f'{metric}_{submetric}'] = subvalue
+            else:
+                flat[metric] = value
+        return flat
+    return {**base_info, 'dag_used': str(dag), **flatten_metrics()}
+
+# Pipeline: No DAG (with reordering)
+
+def run_no_dag(X_train, X_test, col_names, categorical_cols, column_order, column_order_name, config, seed, train_size, repetition):
+    X_train_reordered, col_names_reordered, categorical_cols_reordered = reorder_data_and_columns(
+        X_train, col_names, categorical_cols, column_order
+    )
+    X_test_reordered, _, _ = reorder_data_and_columns(
+        X_test, col_names, categorical_cols, column_order
+    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
+    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
+    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
+    if categorical_cols_reordered:
+        model.set_categorical_features(categorical_cols_reordered)
+    model.fit(torch.from_numpy(X_train_reordered).float())
+    X_synth = generate_synthetic_data_quiet(
+        model, config['test_size'], None, config['n_permutations']
+    )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    metrics = evaluate_metrics(X_test_reordered, X_synth, col_names_reordered, categorical_cols_reordered)
+    base_info = {
+        'train_size': train_size,
+        'repetition': repetition,
+        'seed': seed,
+        'categorical': config['include_categorical'],
+        'column_order_strategy': column_order_name,
+        'column_order': str(column_order),
+    }
+    def flatten_metrics():
+        flat = {}
+        for metric in config['metrics']:
+            value = metrics.get(metric)
+            if isinstance(value, dict):
+                for submetric, subvalue in value.items():
+                    flat[f'{metric}_{submetric}'] = subvalue
+            else:
+                flat[metric] = value
+        return flat
+    return {**base_info, 'dag_used': 'None', **flatten_metrics()}
+
+# Main iteration orchestrator
+
+def run_single_iteration(train_size, repetition, config, X_test, correct_dag, col_names, categorical_cols, no_dag_column_order, column_order_name):
     print(f"  Running train_size={train_size}, rep={repetition+1}/{config['n_repetitions']}")
-    
-    # Set seeds
     seed = config['random_seed_base'] + repetition
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    
-    # Generate training data (always in "original" order first)
     X_train_original = generate_scm_data(train_size, seed, config['include_categorical'])
-    
-    # Get ordering strategy (GENERIC for any DAG!)
-    column_order_name = config.get('column_order_strategy', 'original')
-    available_orderings = get_ordering_strategies(correct_dag)  # ← GENERIC!
-    
-    if column_order_name not in available_orderings:
-        raise ValueError(f"Unknown ordering strategy: {column_order_name}. "
-                        f"Available: {list(available_orderings.keys())}")
-    
-    column_order = available_orderings[column_order_name]
-    print(f"    Using column order: {column_order_name} = {column_order}")
-    
-    # Reorder training data and DAG (GENERIC function!)
-    X_train, dag_reordered = reorder_data_and_dag(X_train_original, correct_dag, column_order)
-    X_train_tensor = torch.from_numpy(X_train).float()
-    
-    # Also reorder test data for consistent evaluation
-    X_test_reordered, _ = reorder_data_and_dag(X_test, correct_dag, column_order)
-    
-    # Reorder column names and categorical indices
-    col_names_reordered = [col_names[i] for i in column_order]
-    categorical_cols_reordered = None
-    if categorical_cols:
-        old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(column_order)}
-        categorical_cols_reordered = [old_to_new[col] for col in categorical_cols if col in old_to_new]
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # === WITH DAG ===
-    clf_dag = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
-    reg_dag = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
-    model_dag = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf_dag, tabpfn_reg=reg_dag)
-    
-    if categorical_cols_reordered:
-        model_dag.set_categorical_features(categorical_cols_reordered)
-    
-    model_dag.fit(X_train_tensor)
-    X_synth_dag = generate_synthetic_data_quiet(
-        model_dag, config['test_size'], dag_reordered, config['n_permutations']
+    print(f"    Using pre-calculated column order: {column_order_name} = {no_dag_column_order}")
+    # With DAG: no reordering
+    row_with_dag = run_with_dag(
+        X_train_original, X_test, correct_dag, col_names, categorical_cols, config, seed, train_size, repetition
     )
-    
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # === WITHOUT DAG ===
-    clf_no_dag = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
-    reg_no_dag = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
-    model_no_dag = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf_no_dag, tabpfn_reg=reg_no_dag)
-    
-    if categorical_cols_reordered:
-        model_no_dag.set_categorical_features(categorical_cols_reordered)
-    
-    # Fit and generate WITHOUT DAG (same reordered data!)
-    model_no_dag.fit(X_train_tensor)
-    X_synth_no_dag = generate_synthetic_data_quiet(
-        model_no_dag, config['test_size'], None, config['n_permutations']
+    # Without DAG: with reordering (using pre-calculated order)
+    row_without_dag = run_no_dag(
+        X_train_original, X_test, col_names, categorical_cols, no_dag_column_order, column_order_name, config, seed, train_size, repetition
     )
-    
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # === EVALUATE ===
-    evaluator = FaithfulDataEvaluator()
-    
-    # BUGFIX: Get the correct list of categorical column NAMES for the evaluator
-    cat_col_names_reordered = []
-    if categorical_cols_reordered:
-        cat_col_names_reordered = [col_names_reordered[i] for i in categorical_cols_reordered]
-
-    metrics_dag = evaluator.evaluate(
-        pd.DataFrame(X_test_reordered, columns=col_names_reordered),
-        pd.DataFrame(X_synth_dag, columns=col_names_reordered),
-        categorical_columns=cat_col_names_reordered if cat_col_names_reordered else None,
-        k_for_kmarginal=2
-    )
-    metrics_no_dag = evaluator.evaluate(
-        pd.DataFrame(X_test_reordered, columns=col_names_reordered),
-        pd.DataFrame(X_synth_no_dag, columns=col_names_reordered),
-        categorical_columns=cat_col_names_reordered if cat_col_names_reordered else None,
-        k_for_kmarginal=2
-    )
-    
-    # Build result
-    result = {
-        'train_size': train_size,
-        'repetition': repetition,
-        'categorical': config['include_categorical'],
-        'column_order_strategy': column_order_name,
-        'column_order': str(column_order),  # For debugging
-        'dag_used': str(dag_reordered)  # Add DAG information
-    }
-    
-    for metric in config['metrics']:
-        value_with_dag = metrics_dag.get(metric)
-        value_without_dag = metrics_no_dag.get(metric)
-        if isinstance(value_with_dag, dict):
-            for submetric, subvalue in value_with_dag.items():
-                result[f'{metric}_{submetric}_with_dag'] = subvalue
-        else:
-            result[f'{metric}_with_dag'] = value_with_dag
-        if isinstance(value_without_dag, dict):
-            for submetric, subvalue in value_without_dag.items():
-                result[f'{metric}_{submetric}_without_dag'] = subvalue
-        else:
-            result[f'{metric}_without_dag'] = value_without_dag
-    
-    return result
+    return [row_with_dag, row_without_dag]
 
 def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True):
     """
@@ -191,8 +178,17 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
     correct_dag, col_names, categorical_cols = get_dag_and_config(config['include_categorical'])
     X_test_original = generate_scm_data(config['test_size'], 123, config['include_categorical'])
     
+    # Pre-calculate column order for no_dag case (ONCE!)
+    available_orderings = get_ordering_strategies(correct_dag)
+    column_order_name = config.get('column_order_strategy')
+    if column_order_name not in available_orderings:
+        raise ValueError(f"Unknown ordering strategy: {column_order_name}. "
+                        f"Available: {list(available_orderings.keys())}")
+    no_dag_column_order = available_orderings[column_order_name]
+    print(f"Pre-calculated column order for no_dag case: {column_order_name} = {no_dag_column_order}")
+    
     # Determine file suffix based on column_order_strategy
-    strategy = config.get('column_order_strategy', 'original')
+    strategy = config.get('column_order_strategy')
     suffix = strategy
     
     raw_results_file = output_dir / f"raw_results_{suffix}.csv"
@@ -214,19 +210,19 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
         for train_idx, train_size in enumerate(config['train_sizes'][start_train_idx:], start_train_idx):
             rep_start = start_rep if train_idx == start_train_idx else 0
             for rep in range(rep_start, config['n_repetitions']):
-                result = run_single_iteration(
+                results = run_single_iteration(
                     train_size, rep, config, X_test_original, 
-                    correct_dag, col_names, categorical_cols
+                    correct_dag, col_names, categorical_cols, no_dag_column_order, column_order_name
                 )
-                results_so_far.append(result)
+                results_so_far.extend(results)
                 # Save to CSV incrementally
                 df_current = pd.DataFrame(results_so_far)
                 df_current.to_csv(raw_results_file, index=False)
                 # Save checkpoint
                 save_checkpoint(results_so_far, train_idx, rep + 1, output_dir)
                 # Progress
-                completed += 1
-                print(f"    Progress: {completed}/{total_iterations} ({100*completed/total_iterations:.1f}%)")
+                completed += 2
+                print(f"    Progress: {completed}/{total_iterations*2} ({100*completed/(total_iterations*2):.1f}%)")
                 print(f"    Results saved to: {raw_results_file}")
             start_rep = 0
     except KeyboardInterrupt:

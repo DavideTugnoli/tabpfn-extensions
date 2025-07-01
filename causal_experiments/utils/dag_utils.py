@@ -521,19 +521,16 @@ def create_dag_variations(dag: Dict[int, List[int]], random_state: int = 42) -> 
     Create all standard DAG variations for robustness testing.
     
     Args:
-        dag: Original DAG structure
+        dag: Original DAG structure. This is treated as a read-only template.
         random_state: Random seed for reproducibility
         
     Returns:
-        Dictionary with all DAG variations:
-        - 'correct': Original DAG
-        - 'no_dag': None
-        - 'wrong_parents': Shuffled parent relationships
-        - 'missing_edges': 50% of edges removed
-        - 'extra_edges': 50% more edges added
+        Dictionary with all DAG variations. The 'correct' variation is a reference
+        to the original dag, while others are new, modified DAG objects.
     """
     variations = {
-        'correct': dag.copy(),
+        # The original DAG is passed by reference, assuming it's not modified elsewhere.
+        'correct': dag,
         'no_dag': None,
         'wrong_parents': create_wrong_parents_dag(dag, random_state),
         'missing_edges': create_missing_edges_dag(dag, 0.5, random_state),

@@ -18,14 +18,21 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from io import StringIO
 import warnings
+import argparse
 warnings.filterwarnings('ignore')
 
+# Add the causal_experiments directory to the path for local imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+# TabPFN imports
 from tabpfn_extensions import TabPFNClassifier, TabPFNRegressor, unsupervised
+
+# Local imports
 from utils.scm_data import generate_scm_data, get_dag_and_config
 from utils.metrics import FaithfulDataEvaluator
-from utils.dag_utils import cpdag_to_dags
+from utils.dag_utils import cpdag_to_dags, get_ordering_strategies
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
-from utils.experiment_utils import generate_synthetic_data_quiet
+from utils.experiment_utils import generate_synthetic_data_quiet, reorder_data_and_columns
 
 
 def categorize_dags_by_complexity(dags, max_dags_to_test=5):
@@ -89,114 +96,147 @@ def categorize_dags_by_complexity(dags, max_dags_to_test=5):
     return categories
 
 
-def run_single_configuration(train_size, dag_level, repetition, config, 
-                           X_test, dag_categories, col_names, categorical_cols):
-    """
-    Run one configuration: train_size + dag_level + repetition.
-    """
-    print(f"    DAG level: {dag_level}, Rep: {repetition+1}/{config['n_repetitions']}")
-    
-    # Set seeds
-    seed = config['random_seed_base'] + repetition
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    
-    # Generate training data
-    X_train = generate_scm_data(
-        n_samples=train_size,
-        random_state=seed,
-        include_categorical=config['include_categorical']
-    )
-    X_train_tensor = torch.from_numpy(X_train).float()
-    
-    # Get the DAG to use
-    dag_to_use = dag_categories[dag_level]
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Create and train model
-    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
-    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
-    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
-    
-    if categorical_cols:
-        model.set_categorical_features(categorical_cols)
-    
-    model.fit(X_train_tensor)
-    
-    # Generate synthetic data
-    X_synthetic = generate_synthetic_data_quiet(
-        model, 
-        n_samples=X_test.shape[0], 
-        dag=dag_to_use,
-        n_permutations=config['n_permutations']
-    )
-    
-    # Ensure DataFrame inputs for evaluator
-    if not isinstance(X_test, pd.DataFrame):
-        X_test = pd.DataFrame(X_test, columns=col_names)
-    if not isinstance(X_synthetic, pd.DataFrame):
-        X_synthetic = pd.DataFrame(X_synthetic, columns=col_names)
-
-    evaluator = FaithfulDataEvaluator()
-
-    # BUGFIX: Get the correct list of categorical column NAMES for the evaluator
-    cat_col_names = []
-    if categorical_cols:
-        cat_col_names = [col_names[i] for i in categorical_cols]
-
-    metrics = evaluator.evaluate(
-        X_test,
-        X_synthetic,
-        categorical_columns=cat_col_names if cat_col_names else None,
-        k_for_kmarginal=2
-    )
-    # Flatten propensity_metrics if present
-    flat_metrics = {}
-    for metric, value in metrics.items():
-        if isinstance(value, dict):
-            for submetric, subvalue in value.items():
-                flat_metrics[f'{metric}_{submetric}'] = subvalue
-        else:
-            flat_metrics[metric] = value
-    
-    # Prepare result dictionary
-    result = {
-        'train_size': train_size,
-        'dag_level': dag_level,
-        'repetition': repetition,
-        'categorical': config['include_categorical'],
-        **flat_metrics
-    }
-    
-    # Add DAG structure info for analysis
-    if dag_to_use is not None:
-        result['dag_edges'] = sum(len(parents) for parents in dag_to_use.values())
-        result['dag_nodes'] = len(dag_to_use)
-        # Add the actual DAG structure in index notation for clarity
-        result['dag_structure'] = str(dag_to_use)
-    else:
-        result['dag_edges'] = 0
-        result['dag_nodes'] = 0
-        result['dag_structure'] = 'None'
-    
-    return result
-
-
 # Centralized default config
 DEFAULT_CONFIG = {
     'train_sizes': [50, 100, 200, 500],
     'n_repetitions': 10,
     'test_size': 2000,
     'n_permutations': 3,
-    'metrics': ['max_corr_diff', 'propensity_mse', 'kmarginal'],
+    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
     'include_categorical': False,
     'n_estimators': 3,
     'random_seed_base': 42,
     'sample_dags': False,  # Whether to sample DAGs or test all
-    'max_dags_to_test': 5  # Max DAGs to test when sampling
+    'max_dags_to_test': 5,  # Max DAGs to test when sampling
+    'no_dag_order_strategy': 'original',  # Changed: original instead of topological
 }
+
+# Utility: Evaluate metrics
+
+def evaluate_metrics(X_test, X_synth, col_names, categorical_cols, k_for_kmarginal=2):
+    evaluator = FaithfulDataEvaluator()
+    cat_col_names = [col_names[i] for i in categorical_cols] if categorical_cols else []
+    return evaluator.evaluate(
+        pd.DataFrame(X_test, columns=col_names),
+        pd.DataFrame(X_synth, columns=col_names),
+        categorical_columns=cat_col_names if cat_col_names else None,
+        k_for_kmarginal=k_for_kmarginal
+    )
+
+# Pipeline: With DAG (no reordering)
+
+def run_with_dag_type(X_train, X_test, dag, col_names, categorical_cols, config, seed, train_size, repetition, dag_type):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
+    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
+    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
+    if categorical_cols:
+        model.set_categorical_features(categorical_cols)
+    model.fit(torch.from_numpy(X_train).float())
+    X_synth = generate_synthetic_data_quiet(
+        model, n_samples=X_test.shape[0], dag=dag, n_permutations=config['n_permutations']
+    )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    metrics = evaluate_metrics(X_test, X_synth, col_names, categorical_cols)
+    base_info = {
+        'train_size': train_size,
+        'dag_type': dag_type,
+        'repetition': repetition,
+        'seed': seed,
+        'categorical': config['include_categorical'],
+        'column_order_strategy': 'none',
+        'column_order': 'none',
+    }
+    def flatten_metrics():
+        flat = {}
+        for metric in config['metrics']:
+            value = metrics.get(metric)
+            if isinstance(value, dict):
+                for submetric, subvalue in value.items():
+                    flat[f'{metric}_{submetric}'] = subvalue
+            else:
+                flat[metric] = value
+        return flat
+    # Add DAG structure info for analysis
+    if dag is not None:
+        base_info['dag_edges'] = sum(len(parents) for parents in dag.values())
+        base_info['dag_nodes'] = len(dag)
+        base_info['dag_structure'] = str(dag)
+    else:
+        base_info['dag_edges'] = 0
+        base_info['dag_nodes'] = 0
+        base_info['dag_structure'] = 'None'
+    return {**base_info, **flatten_metrics()}
+
+# Pipeline: No DAG (with reordering)
+
+def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_type, pre_calculated_column_order, pre_calculated_order_strategy):
+    X_train_reordered, col_names_reordered, categorical_cols_reordered = reorder_data_and_columns(
+        X_train, col_names, categorical_cols, pre_calculated_column_order
+    )
+    X_test_reordered, _, _ = reorder_data_and_columns(
+        X_test, col_names, categorical_cols, pre_calculated_column_order
+    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    clf = TabPFNClassifier(n_estimators=config['n_estimators'], device=device)
+    reg = TabPFNRegressor(n_estimators=config['n_estimators'], device=device)
+    model = unsupervised.TabPFNUnsupervisedModel(tabpfn_clf=clf, tabpfn_reg=reg)
+    if categorical_cols_reordered:
+        model.set_categorical_features(categorical_cols_reordered)
+    model.fit(torch.from_numpy(X_train_reordered).float())
+    X_synth = generate_synthetic_data_quiet(
+        model, n_samples=X_test.shape[0], dag=None, n_permutations=config['n_permutations']
+    )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    metrics = evaluate_metrics(X_test_reordered, X_synth, col_names_reordered, categorical_cols_reordered)
+    base_info = {
+        'train_size': train_size,
+        'dag_type': dag_type,
+        'repetition': repetition,
+        'seed': seed,
+        'categorical': config['include_categorical'],
+        'column_order_strategy': pre_calculated_order_strategy,
+        'column_order': str(pre_calculated_column_order),
+        'dag_edges': 0,
+        'dag_nodes': 0,
+        'dag_structure': 'None',
+    }
+    def flatten_metrics():
+        flat = {}
+        for metric in config['metrics']:
+            value = metrics.get(metric)
+            if isinstance(value, dict):
+                for submetric, subvalue in value.items():
+                    flat[f'{metric}_{submetric}'] = subvalue
+            else:
+                flat[metric] = value
+        return flat
+    return {**base_info, **flatten_metrics()}
+
+# Main configuration orchestrator
+
+def run_single_configuration(train_size, dag_level, repetition, config, 
+                           X_test, dag_categories, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy):
+    print(f"    DAG level: {dag_level}, Rep: {repetition+1}/{config['n_repetitions']}")
+    seed = config['random_seed_base'] + repetition
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    X_train = generate_scm_data(
+        n_samples=train_size,
+        random_state=seed,
+        include_categorical=config['include_categorical']
+    )
+    dag_to_use = dag_categories[dag_level]
+    # For 'no_dag', apply reordering and no DAG (using pre-calculated order)
+    if dag_level == 'no_dag':
+        print(f"    Using pre-calculated column order: {no_dag_order_strategy} = {no_dag_column_order}")
+        return run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_level, no_dag_column_order, no_dag_order_strategy)
+    # For all other DAG types, no reordering
+    else:
+        return run_with_dag_type(X_train, X_test, dag_to_use, col_names, categorical_cols, config, seed, train_size, repetition, dag_level)
 
 def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resume=True):
     """
@@ -237,6 +277,19 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
         else:
             print(f"  {name}: no DAG")
     
+    # Pre-calculate column order for no_dag case (ONCE!)
+    # Use the first available DAG for getting ordering strategies
+    first_dag = next((dag for dag in dag_categories.values() if dag is not None), None)
+    if first_dag is None:
+        # If no DAGs available, use a simple default
+        first_dag = {0: [], 1: [0], 2: [0, 1]}  # Simple chain as fallback
+    available_orderings = get_ordering_strategies(first_dag)
+    no_dag_order_strategy = config.get('no_dag_order_strategy')
+    if no_dag_order_strategy not in available_orderings:
+        raise ValueError(f"Unknown no_dag_order_strategy: {no_dag_order_strategy}. Available: {list(available_orderings.keys())}")
+    no_dag_column_order = available_orderings[no_dag_order_strategy]
+    print(f"Pre-calculated column order for no_dag case: {no_dag_order_strategy} = {no_dag_column_order}")
+    
     # Check for checkpoint
     if resume:
         results_so_far, start_train_idx, start_rep = get_checkpoint_info(output_dir, "experiment_4_checkpoint.pkl")
@@ -260,7 +313,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
                     
                     result = run_single_configuration(
                         train_size, dag_level, rep, config, X_test,
-                        dag_categories, col_names, categorical_cols
+                        dag_categories, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy
                     )
                     
                     results_so_far.append(result)
@@ -291,7 +344,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
             
             result = run_single_configuration(
                 train_size, 'true_dag', rep, config, X_test,
-                {'true_dag': true_dag}, col_names, categorical_cols
+                {'true_dag': true_dag}, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy
             )
             
             results_so_far.append(result)
