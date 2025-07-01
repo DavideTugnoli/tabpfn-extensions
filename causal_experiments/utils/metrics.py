@@ -47,8 +47,8 @@ def calculate_correlation_metrics(
         warnings.simplefilter("ignore", RuntimeWarning)
         evaluator.evaluate(
             synthetic_data,
-            None,
-            **{"corr_diff": {"return_mats": True}}
+            ofile=None,
+            **{"corr_diff": {"return_mats": True, "plot_mat": False}}
         )
 
     metrics = {}
@@ -94,8 +94,8 @@ def calculate_propensity_metrics(
         warnings.simplefilter("ignore", RuntimeWarning)
         evaluator.evaluate(
             synthetic_data,
-            None,
-            **{"p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear"}}
+            ofile=None,
+            **{"p_mse": {"k_folds": 5, "max_iter": 100, "solver": "liblinear", "plot_res": False}}
         )
     keys = ['avg pMSE', 'pMSE err', 'avg acc', 'acc err']
     try:
