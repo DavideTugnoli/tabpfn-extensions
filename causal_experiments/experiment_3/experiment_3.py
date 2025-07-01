@@ -45,6 +45,18 @@ from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info, create_dag_variations
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
 
+# Centralized default config
+DEFAULT_CONFIG = {
+    'train_sizes': [20, 50, 100, 200, 500],
+    'dag_types': ['correct', 'no_dag', 'wrong_parents', 'missing_edges', 'extra_edges'],
+    'n_repetitions': 10,
+    'test_size': 2000,
+    'n_permutations': 3,
+    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
+    'include_categorical': False,
+    'n_estimators': 3,
+    'random_seed_base': 42
+}
 
 def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
     """Generate synthetic data with TabPFN, suppressing output."""
@@ -163,19 +175,11 @@ def run_experiment_3(config=None, output_dir="experiment_3_results", resume=True
     """
     Main experiment function for testing DAG robustness.
     """
-    # Default config
-    if config is None:
-        config = {
-            'train_sizes': [20, 50, 100, 200, 500],
-            'n_repetitions': 10,
-            'test_size': 2000,
-            'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
-            'include_categorical': False,
-            'n_estimators': 3,
-            'random_seed_base': 42,
-            'dag_types': ['correct', 'no_dag', 'missing_edges']
-        }
+    # Use centralized config and update with any overrides
+    base_config = DEFAULT_CONFIG.copy()
+    if config is not None:
+        base_config.update(config)
+    config = base_config
     
     # Create output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -287,19 +291,9 @@ def main():
     print("4. missing_edges: Some true edges removed")
     print("5. extra_edges: Spurious edges added")
     
-    # Configuration
+    # Use centralized config
     print("\n\nRunning FULL experiment...")
-    config = {
-        'train_sizes': [20, 50, 100, 200, 500],
-        'dag_types': ['correct', 'no_dag', 'wrong_parents', 'missing_edges', 'extra_edges'],
-        'n_repetitions': 10,
-        'test_size': 2000,
-        'n_permutations': 3,
-        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
-        'include_categorical': False,
-        'n_estimators': 3,
-        'random_seed_base': 42
-    }
+    config = DEFAULT_CONFIG.copy()
     output_dir = args.output or "experiment_3_results"
     
     # Calculate total configurations

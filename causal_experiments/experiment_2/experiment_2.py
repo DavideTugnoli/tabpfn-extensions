@@ -42,6 +42,18 @@ from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
 
+# Centralized default config
+DEFAULT_CONFIG = {
+    'train_sizes': [20, 50, 100, 200, 500],
+    'ordering_strategies': ['original', 'topological', 'worst', 'random'],
+    'n_repetitions': 10,
+    'test_size': 2000,
+    'n_permutations': 3,
+    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
+    'include_categorical': False,
+    'n_estimators': 3,
+    'random_seed_base': 42
+}
 
 def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
     """Generate synthetic data with TabPFN, suppressing output."""
@@ -174,19 +186,11 @@ def run_experiment_2(config=None, output_dir="experiment_2_results", resume=True
     """
     Main experiment function for testing column ordering effects.
     """
-    # Default config
-    if config is None:
-        config = {
-            'train_sizes': [20, 50, 100, 200, 500],
-            'ordering_strategies': ['original', 'topological', 'worst', 'random'],
-            'n_repetitions': 10,
-            'test_size': 2000,
-            'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
-            'include_categorical': False,
-            'n_estimators': 3,
-            'random_seed_base': 42
-        }
+    # Use centralized config and update with any overrides
+    base_config = DEFAULT_CONFIG.copy()
+    if config is not None:
+        base_config.update(config)
+    config = base_config
     
     # Create output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -286,19 +290,9 @@ def main():
     print_dag_info(dag, col_names)
     print()
     
-    # Configuration (only full version)
+    # Use centralized config
     print("Running FULL experiment...")
-    config = {
-        'train_sizes': [20, 50, 100, 200, 500],
-        'ordering_strategies': ['original', 'topological', 'worst', 'random'],
-        'n_repetitions': 10,
-        'test_size': 2000,
-        'n_permutations': 3,
-        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_mse', 'k_marginal_tvd'],
-        'include_categorical': False,
-        'n_estimators': 3,
-        'random_seed_base': 42
-    }
+    config = DEFAULT_CONFIG.copy()
     output_dir = args.output or "experiment_2_results"
     
     # Calculate total configurations

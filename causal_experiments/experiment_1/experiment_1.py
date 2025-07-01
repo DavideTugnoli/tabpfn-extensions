@@ -32,6 +32,19 @@ from utils.metrics import FaithfulDataEvaluator
 from utils.dag_utils import get_ordering_strategies, reorder_data_and_dag, print_dag_info
 from utils.checkpoint_utils import save_checkpoint, get_checkpoint_info, cleanup_checkpoint
 
+# Centralized default config
+DEFAULT_CONFIG = {
+    'train_sizes': [20, 50, 100, 200, 500],
+    'n_repetitions': 10,
+    'test_size': 2000,
+    'n_permutations': 3,
+    'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
+    'include_categorical': False,
+    'n_estimators': 3,
+    'random_seed_base': 42,
+    'column_order_strategy': 'original',
+}
+
 def generate_synthetic_data_quiet(model, n_samples, dag=None, n_permutations=3):
     """Generate synthetic data with TabPFN, suppressing output."""
     plt.ioff()
@@ -183,19 +196,11 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
     """
     Main experiment function with column ordering control.
     """
-    # Default config
-    if config is None:
-        config = {
-            'train_sizes': [20, 50, 100, 200, 500],
-            'n_repetitions': 10,
-            'test_size': 2000,
-            'n_permutations': 3,
-            'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
-            'include_categorical': False,
-            'n_estimators': 3,
-            'random_seed_base': 42,
-            'column_order_strategy': 'original'  # NEW: Control column ordering!
-        }
+    # Use centralized config and update with any overrides
+    base_config = DEFAULT_CONFIG.copy()
+    if config is not None:
+        base_config.update(config)
+    config = base_config
     
     # Create output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -208,6 +213,13 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
     # Setup
     correct_dag, col_names, categorical_cols = get_dag_and_config(config['include_categorical'])
     X_test_original = generate_scm_data(config['test_size'], 123, config['include_categorical'])
+    
+    # Determine file suffix based on column_order_strategy
+    strategy = config.get('column_order_strategy', 'original')
+    suffix = strategy
+    
+    raw_results_file = output_dir / f"raw_results_{suffix}.csv"
+    raw_results_final_file = output_dir / f"raw_results_final_{suffix}.csv"
     
     # Check for checkpoint
     if resume:
@@ -223,49 +235,35 @@ def run_experiment_1(config=None, output_dir="experiment_1_results", resume=True
     
     try:
         for train_idx, train_size in enumerate(config['train_sizes'][start_train_idx:], start_train_idx):
-            
             rep_start = start_rep if train_idx == start_train_idx else 0
-            
             for rep in range(rep_start, config['n_repetitions']):
-                
                 result = run_single_iteration(
                     train_size, rep, config, X_test_original, 
                     correct_dag, col_names, categorical_cols
                 )
-                
                 results_so_far.append(result)
-                
                 # Save to CSV incrementally
                 df_current = pd.DataFrame(results_so_far)
-                df_current.to_csv(output_dir / "raw_results.csv", index=False)
-                
+                df_current.to_csv(raw_results_file, index=False)
                 # Save checkpoint
                 save_checkpoint(results_so_far, train_idx, rep + 1, output_dir)
-                
                 # Progress
                 completed += 1
                 print(f"    Progress: {completed}/{total_iterations} ({100*completed/total_iterations:.1f}%)")
-                print(f"    Results saved to: {output_dir}/raw_results.csv")
-            
+                print(f"    Results saved to: {raw_results_file}")
             start_rep = 0
-    
     except KeyboardInterrupt:
         print("\nExperiment interrupted. Progress saved!")
         return pd.DataFrame(results_so_far)
-    
     # Experiment completed
     print("\nExperiment completed!")
-    
     # Clean up checkpoint
     cleanup_checkpoint(output_dir)
-    
     # Final results
     df_results = pd.DataFrame(results_so_far)
-    df_results.to_csv(output_dir / "raw_results_final.csv", index=False)
-    
-    print(f"Results saved to: {output_dir}")
+    df_results.to_csv(raw_results_final_file, index=False)
+    print(f"Results saved to: {raw_results_final_file}")
     print(f"Total results: {len(df_results)}")
-    
     return df_results
 
 def main():
@@ -273,44 +271,30 @@ def main():
     parser = argparse.ArgumentParser(description='Run Experiment 1')
     parser.add_argument('--no-resume', action='store_true',
                        help='Start fresh (ignore checkpoint)')
-    parser.add_argument('--order', type=str, default='both',
+    parser.add_argument('--order', type=str, default=None,
                        choices=['original', 'topological', 'worst', 'random', 'reverse', 'both'],
                        help='Column ordering strategy')
     parser.add_argument('--output', type=str, default=None,
                        help='Output directory (auto-generated if not specified)')
-    
     args = parser.parse_args()
-    
+
     # Show DAG info first
     dag, col_names, _ = get_dag_and_config(False)
     print("Current SCM structure:")
     print_dag_info(dag, col_names)
     print()
-    
-    # Full experiment config
-    config = {
-        'train_sizes': [20, 50, 100, 200, 500],
-        'n_repetitions': 10,
-        'test_size': 2000,
-        'n_permutations': 3,
-        'metrics': ['mean_corr_difference', 'max_corr_difference', 'propensity_metrics', 'k_marginal_tvd'],
-        'include_categorical': False,
-        'n_estimators': 3,
-        'random_seed_base': 42,
-    }
-    
+
     # Determine which orderings to run
-    if args.order == 'both':
+    if args.order is None or args.order == 'both':
         orderings_to_run = ['topological', 'original']
     else:
         orderings_to_run = [args.order]
-    
+
     all_results = []
-    
     for ordering in orderings_to_run:
+        config = DEFAULT_CONFIG.copy()
         config['column_order_strategy'] = ordering
         output_dir = args.output or f"experiment_1_{ordering}"
-        
         print(f"\n{'='*50}")
         print(f"Starting Experiment 1 with ordering: {ordering}")
         print(f"Column order strategy: {ordering}")
@@ -318,15 +302,12 @@ def main():
         print(f"Output: {output_dir}")
         print(f"Total iterations: {len(config['train_sizes']) * config['n_repetitions']}")
         print(f"{'='*50}")
-        
         results = run_experiment_1(
             config=config,
             output_dir=output_dir,
             resume=not args.no_resume
         )
-        
         all_results.append(results)
-    
     # Combine all results if multiple orderings were run
     if len(all_results) > 1:
         combined_results = pd.concat(all_results, ignore_index=True)
@@ -336,7 +317,6 @@ def main():
         combined_results.to_csv(combined_output_dir / "combined_results.csv", index=False)
         print(f"\nCombined results saved to: {combined_output_dir}")
         print(f"Combined results shape: {combined_results.shape}")
-    
     print(f"\nAll experiments completed!")
 
 
