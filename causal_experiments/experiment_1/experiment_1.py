@@ -135,16 +135,21 @@ def run_single_iteration(train_size, repetition, config, X_test, correct_dag, co
     # === EVALUATE ===
     evaluator = FaithfulDataEvaluator()
     
+    # BUGFIX: Get the correct list of categorical column NAMES for the evaluator
+    cat_col_names_reordered = []
+    if categorical_cols_reordered:
+        cat_col_names_reordered = [col_names_reordered[i] for i in categorical_cols_reordered]
+
     metrics_dag = evaluator.evaluate(
         pd.DataFrame(X_test_reordered, columns=col_names_reordered),
         pd.DataFrame(X_synth_dag, columns=col_names_reordered),
-        categorical_columns=categorical_cols_reordered,
+        categorical_columns=cat_col_names_reordered if cat_col_names_reordered else None,
         k_for_kmarginal=2
     )
     metrics_no_dag = evaluator.evaluate(
         pd.DataFrame(X_test_reordered, columns=col_names_reordered),
         pd.DataFrame(X_synth_no_dag, columns=col_names_reordered),
-        categorical_columns=categorical_cols_reordered,
+        categorical_columns=cat_col_names_reordered if cat_col_names_reordered else None,
         k_for_kmarginal=2
     )
     

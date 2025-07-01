@@ -162,11 +162,18 @@ def run_single_configuration(train_size, dag_level, repetition, config,
         X_test = pd.DataFrame(X_test, columns=col_names)
     if not isinstance(X_synthetic, pd.DataFrame):
         X_synthetic = pd.DataFrame(X_synthetic, columns=col_names)
+
     evaluator = FaithfulDataEvaluator()
+
+    # BUGFIX: Get the correct list of categorical column NAMES for the evaluator
+    cat_col_names = []
+    if categorical_cols:
+        cat_col_names = [col_names[i] for i in categorical_cols]
+
     metrics = evaluator.evaluate(
         X_test,
         X_synthetic,
-        categorical_columns=col_names,
+        categorical_columns=cat_col_names if cat_col_names else None,
         k_for_kmarginal=2
     )
     # Flatten propensity_metrics if present
