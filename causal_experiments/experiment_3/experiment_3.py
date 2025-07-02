@@ -91,7 +91,7 @@ def run_with_dag_type(X_train, X_test, dag, col_names, categorical_cols, config,
     base_info = {
         'train_size': train_size,
         'dag_type': dag_type,
-        'dag_used': str(dag) if dag is not None else 'None',
+        'dag_used': str(dag) if dag is not None else '',
         'repetition': repetition,
         'seed': seed,
         'categorical': config['include_categorical'],
@@ -140,12 +140,12 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train
     base_info = {
         'train_size': train_size,
         'dag_type': dag_type,
-        'dag_used': 'None',
+        'dag_used': '',
         'repetition': repetition,
         'seed': seed,
         'categorical': config['include_categorical'],
-        'column_order_strategy': pre_calculated_order_strategy,
-        'column_order': str(pre_calculated_column_order),
+        'column_order_strategy': pre_calculated_order_strategy if pre_calculated_order_strategy != 'none' else '',
+        'column_order': str(pre_calculated_column_order) if pre_calculated_order_strategy != 'none' else '',
     }
     def flatten_metrics():
         flat = {}
@@ -243,7 +243,7 @@ def run_experiment_3(config=None, output_dir="experiment_3_results", resume=True
                     
                     # Save to CSV incrementally
                     df_current = pd.DataFrame(results_so_far)
-                    df_current.to_csv(output_dir / "raw_results.csv", index=False)
+                    df_current.to_csv(output_dir / "raw_results.csv", index=False, na_rep='')
                     
                     # Save checkpoint
                     save_checkpoint(results_so_far, train_idx, rep + 1, output_dir)
@@ -267,7 +267,7 @@ def run_experiment_3(config=None, output_dir="experiment_3_results", resume=True
     
     # Final results
     df_results = pd.DataFrame(results_so_far)
-    df_results.to_csv(output_dir / "raw_results_final.csv", index=False)
+    df_results.to_csv(output_dir / "raw_results_final.csv", index=False, na_rep='')
     
     print(f"Results saved to: {output_dir}")
     print(f"Total results: {len(df_results)}")

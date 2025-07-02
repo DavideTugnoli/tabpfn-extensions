@@ -144,8 +144,8 @@ def run_with_dag_type(X_train, X_test, dag, col_names, categorical_cols, config,
         'repetition': repetition,
         'seed': seed,
         'categorical': config['include_categorical'],
-        'column_order_strategy': 'none',
-        'column_order': 'none',
+        'column_order_strategy': '',
+        'column_order': '',
     }
     def flatten_metrics():
         flat = {}
@@ -161,7 +161,7 @@ def run_with_dag_type(X_train, X_test, dag, col_names, categorical_cols, config,
     if dag is not None:
         base_info['dag_edges'] = sum(len(parents) for parents in dag.values())
         base_info['dag_nodes'] = len(dag)
-        base_info['dag_structure'] = str(dag)
+        base_info['dag_structure'] = str(dag) if dag is not None else ''
     else:
         base_info['dag_edges'] = 0
         base_info['dag_nodes'] = 0
@@ -200,7 +200,7 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train
         'column_order': str(pre_calculated_column_order),
         'dag_edges': 0,
         'dag_nodes': 0,
-        'dag_structure': 'None',
+        'dag_structure': '',
     }
     def flatten_metrics():
         flat = {}
@@ -316,7 +316,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
                     
                     # Save to CSV incrementally
                     df_current = pd.DataFrame(results_so_far)
-                    df_current.to_csv(output_dir / "raw_results.csv", index=False)
+                    df_current.to_csv(output_dir / "raw_results.csv", index=False, na_rep='')
                     
                     # Save checkpoint
                     save_checkpoint(results_so_far, train_idx, rep + 1, output_dir, "experiment_4_checkpoint.pkl")
@@ -347,7 +347,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
             
             # Save to CSV incrementally
             df_current = pd.DataFrame(results_so_far)
-            df_current.to_csv(output_dir / "raw_results.csv", index=False)
+            df_current.to_csv(output_dir / "raw_results.csv", index=False, na_rep='')
     
     # Experiment completed
     print("\nExperiment completed!")
@@ -357,7 +357,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
     
     # Final results
     df_results = pd.DataFrame(results_so_far)
-    df_results.to_csv(output_dir / "raw_results_final.csv", index=False)
+    df_results.to_csv(output_dir / "raw_results_final.csv", index=False, na_rep='')
     
     print(f"Results saved to: {output_dir}")
     print(f"Total results: {len(df_results)}")
