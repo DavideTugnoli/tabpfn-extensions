@@ -95,7 +95,7 @@ def categorize_dags_by_complexity(dags, max_dags_to_test=5):
     
     return categories
 
-
+# we always use the original column order for no_dag case because we don't have causal knowledge
 # Centralized default config
 DEFAULT_CONFIG = {
     'train_sizes': [50, 100, 200, 500],
@@ -108,7 +108,6 @@ DEFAULT_CONFIG = {
     'random_seed_base': 42,
     'sample_dags': False,  # Whether to sample DAGs or test all
     'max_dags_to_test': 5,  # Max DAGs to test when sampling
-    'no_dag_order_strategy': 'original',  # Changed: original instead of topological
 }
 
 # Utility: Evaluate metrics
@@ -171,7 +170,7 @@ def run_with_dag_type(X_train, X_test, dag, col_names, categorical_cols, config,
 
 # Pipeline: No DAG (with reordering)
 
-def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_type, pre_calculated_column_order, pre_calculated_order_strategy):
+def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_type, pre_calculated_column_order):
     X_train_reordered, col_names_reordered, categorical_cols_reordered = reorder_data_and_columns(
         X_train, col_names, categorical_cols, pre_calculated_column_order
     )
@@ -197,7 +196,7 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train
         'repetition': repetition,
         'seed': seed,
         'categorical': config['include_categorical'],
-        'column_order_strategy': pre_calculated_order_strategy,
+        'column_order_strategy': 'original',
         'column_order': str(pre_calculated_column_order),
         'dag_edges': 0,
         'dag_nodes': 0,
@@ -218,7 +217,7 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train
 # Main configuration orchestrator
 
 def run_single_configuration(train_size, dag_level, repetition, config, 
-                           X_test, dag_categories, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy):
+                           X_test, dag_categories, col_names, categorical_cols, no_dag_column_order):
     print(f"    DAG level: {dag_level}, Rep: {repetition+1}/{config['n_repetitions']}")
     seed = config['random_seed_base'] + repetition
     torch.manual_seed(seed)
@@ -232,8 +231,8 @@ def run_single_configuration(train_size, dag_level, repetition, config,
     dag_to_use = dag_categories[dag_level]
     # For 'no_dag', apply reordering and no DAG (using pre-calculated order)
     if dag_level == 'no_dag':
-        print(f"    Using pre-calculated column order: {no_dag_order_strategy} = {no_dag_column_order}")
-        return run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_level, no_dag_column_order, no_dag_order_strategy)
+        print(f"    Using pre-calculated column order: original = {no_dag_column_order}")
+        return run_no_dag(X_train, X_test, col_names, categorical_cols, config, seed, train_size, repetition, dag_level, no_dag_column_order)
     # For all other DAG types, no reordering
     else:
         return run_with_dag_type(X_train, X_test, dag_to_use, col_names, categorical_cols, config, seed, train_size, repetition, dag_level)
@@ -281,14 +280,11 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
     # Use the first available DAG for getting ordering strategies
     first_dag = next((dag for dag in dag_categories.values() if dag is not None), None)
     if first_dag is None:
-        # If no DAGs available, use a simple default
-        first_dag = {0: [], 1: [0], 2: [0, 1]}  # Simple chain as fallback
+        # If no DAGs available, raise an error instead of using hardcoded fallback
+        raise ValueError("No DAGs available for determining column ordering. Check CPDAG generation.")
     available_orderings = get_ordering_strategies(first_dag)
-    no_dag_order_strategy = config.get('no_dag_order_strategy')
-    if no_dag_order_strategy not in available_orderings:
-        raise ValueError(f"Unknown no_dag_order_strategy: {no_dag_order_strategy}. Available: {list(available_orderings.keys())}")
-    no_dag_column_order = available_orderings[no_dag_order_strategy]
-    print(f"Pre-calculated column order for no_dag case: {no_dag_order_strategy} = {no_dag_column_order}")
+    no_dag_column_order = available_orderings['original']
+    print(f"Pre-calculated column order for no_dag case: original = {no_dag_column_order}")
     
     # Check for checkpoint
     if resume:
@@ -313,7 +309,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
                     
                     result = run_single_configuration(
                         train_size, dag_level, rep, config, X_test,
-                        dag_categories, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy
+                        dag_categories, col_names, categorical_cols, no_dag_column_order
                     )
                     
                     results_so_far.append(result)
@@ -344,7 +340,7 @@ def run_experiment_4(cpdag, config=None, output_dir="experiment_4_results", resu
             
             result = run_single_configuration(
                 train_size, 'true_dag', rep, config, X_test,
-                {'true_dag': true_dag}, col_names, categorical_cols, no_dag_column_order, no_dag_order_strategy
+                {'true_dag': true_dag}, col_names, categorical_cols, no_dag_column_order
             )
             
             results_so_far.append(result)

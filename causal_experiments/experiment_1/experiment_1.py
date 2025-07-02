@@ -121,8 +121,8 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, column_order, colum
         'repetition': repetition,
         'seed': seed,
         'categorical': config['include_categorical'],
-        'column_order_strategy': column_order_name,
-        'column_order': str(column_order),
+        'column_order_strategy': '',
+        'column_order': '',
     }
     def flatten_metrics():
         flat = {}
@@ -134,7 +134,7 @@ def run_no_dag(X_train, X_test, col_names, categorical_cols, column_order, colum
             else:
                 flat[metric] = value
         return flat
-    return {**base_info, 'dag_used': 'None', **flatten_metrics()}
+    return {**base_info, 'dag_used': '', **flatten_metrics()}
 
 # Main iteration orchestrator
 
